@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.88
+
+- Adjusted CSS styling.
+
 ## 0.2.87
 
 - Fixed manual battery capacity override so the configured capacity is shown instead of the underlying sensor value.

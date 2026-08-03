@@ -784,8 +784,7 @@ main {
 
 .stored-energy {
 	color: var(--muted);
-	font-size: 11px;
-	margin-top: 2px;
+	font-size: 12px;
 	white-space: nowrap
 }
 
