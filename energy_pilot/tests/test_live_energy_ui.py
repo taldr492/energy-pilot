@@ -61,11 +61,11 @@ class LiveEnergyUiTests(unittest.TestCase):
     def test_frontend_is_served_from_separate_static_assets(self):
         self.assertNotIn("<style>", self.html)
         self.assertNotIn("<script>", self.html)
-        self.assertIn('href="static/styles.css?v=0.2.85"', self.html)
-        self.assertIn('src="static/app.js?v=0.2.85"', self.html)
+        self.assertIn('href="static/styles.css?v=0.2.87-shared-metrics"', self.html)
+        self.assertIn('src="static/app.js?v=0.2.87-invoice-sign"', self.html)
 
     def test_custom_energy_icons_and_favicon_are_used(self):
-        self.assertIn('href="static/house.svg?v=0.2.85"', self.html)
+        self.assertIn('href="static/house.svg?v=0.2.87"', self.html)
 
     def test_price_breakdown_popovers_are_available(self):
         self.assertIn("price-breakdown-trigger", self.js)
@@ -174,6 +174,22 @@ class LiveEnergyUiTests(unittest.TestCase):
         self.assertNotIn("Physical controller", self.html)
         self.assertNotIn("Physical controller", self.js)
 
+
+    def test_manual_capacity_override_uses_active_value_and_hides_entity(self):
+        self.assertIn('id="capacityEntityWrap"', self.html)
+        self.assertIn("$('capacityEntityWrap').classList.toggle('hidden',manual)", self.js)
+        self.assertIn('const activeCapacity=b.capacity_kwh.value', self.js)
+        self.assertIn("Configured by manual override", self.js)
+        self.assertNotIn("b.capacity_kwh.detected_value.toFixed(2)", self.js)
+
+    def test_battery_wear_keeps_sub_cent_precision_and_shows_effective_rate(self):
+        self.assertIn('function preciseWearFromCents(value)', self.js)
+        self.assertIn('preciseWearFromCents(wear)', self.js)
+        self.assertIn('id="batteryBaseWear"', self.html)
+        self.assertIn('id="batteryWearMultiplier"', self.html)
+        self.assertIn('Effective Planner wear', self.html)
+        self.assertIn('battery_wear_base_rate_cents_kwh', self.js)
+        self.assertIn('battery_wear_rate_cents_kwh', self.js)
 
 if __name__ == "__main__":
     unittest.main()

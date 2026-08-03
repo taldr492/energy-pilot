@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.87
+
+- Fixed manual battery capacity override so the configured capacity is shown instead of the underlying sensor value.
+- Hid the Capacity entity field while manual capacity override is enabled.
+- Preserved sub-cent battery wear in Planner slot displays instead of rounding it to 0.00 €.
+- Split Battery economics into base wear, Planner multiplier and effective Planner wear.
+- Synchronized runtime, asset and add-on version metadata.
+
 ## 0.2.85
 
 - Added matching icons to the horizontal web navigation.
