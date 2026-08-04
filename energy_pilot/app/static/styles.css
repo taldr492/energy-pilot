@@ -314,8 +314,8 @@ main {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 20px;
-	margin-bottom: 22px
+	gap: 24px;
+	margin-bottom: 18px
 }
 
 .brand {
@@ -352,12 +352,6 @@ main {
 	margin-top: 1px
 }
 
-.top-actions {
-	display: flex;
-	align-items: center;
-	gap: 9px
-}
-
 .pill {
 	display: flex;
 	align-items: center;
@@ -392,8 +386,10 @@ main {
 
 .nav {
 	display: flex;
+	align-items: center;
+	justify-content: flex-end;
 	gap: 7px;
-	margin-bottom: 14px
+	margin-left: auto
 }
 
 .tab {
@@ -401,7 +397,7 @@ main {
 	background: transparent;
 	color: var(--muted);
 	border-radius: 10px;
-	padding: 9px 13px;
+	padding: 9px 12px;
 	cursor: pointer;
 	display: inline-flex;
 	align-items: center;
@@ -416,6 +412,21 @@ main {
 	background: #142330;
 	color: var(--text);
 	border-color: var(--line)
+}
+
+.page-heading {
+	display: flex;
+	align-items: center;
+	min-height: 34px;
+	margin: 0 0 12px
+}
+
+.page-heading h2 {
+	margin: 0;
+	font-size: clamp(20px, 2vw, 26px);
+	line-height: 1.15;
+	letter-spacing: -.45px;
+	font-weight: 720
 }
 
 .hero {
@@ -1170,7 +1181,12 @@ main {
 	align-items: center;
 	gap: 8px;
 	flex-wrap: wrap;
-	margin: 20px auto 0
+	margin: 22px auto 0
+}
+
+.system-footer .pill {
+	min-height: 37px;
+	background: #0b151e
 }
 
 .system-chip {
@@ -3394,4 +3410,18 @@ main {
 		border-radius: 14px;
 		padding: 15px 16px
 	}
+}
+
+@media (max-width: 760px) {
+	main { padding: 18px 16px 52px }
+	.topbar { align-items: flex-start; gap: 14px }
+	.brand small { display: none }
+	.mark { width: 46px; height: 46px; border-radius: 14px }
+	.brand h1 { font-size: 19px }
+	.nav { gap: 3px; overflow-x: auto; max-width: calc(100vw - 170px); scrollbar-width: none }
+	.nav::-webkit-scrollbar { display: none }
+	.tab { padding: 8px 9px; white-space: nowrap }
+	.tab .nav-icon { display: none }
+	.page-heading { margin-bottom: 10px }
+	.page-heading h2 { font-size: 21px }
 }
