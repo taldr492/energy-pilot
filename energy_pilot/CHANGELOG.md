@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.91
+
+- Removed the recently added duplicate page headings from Overview, Planner, Insights and Settings.
+- Kept each page’s existing content heading as the single visible title.
+- Bumped frontend asset cache-busting so the corrected layout loads immediately.
+
 ## 0.2.90
 
 - Added configuration revision metadata to the settings API.

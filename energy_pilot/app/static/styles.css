@@ -3422,6 +3422,4 @@ main {
 	.nav::-webkit-scrollbar { display: none }
 	.tab { padding: 8px 9px; white-space: nowrap }
 	.tab .nav-icon { display: none }
-	.page-heading { margin-bottom: 10px }
-	.page-heading h2 { font-size: 21px }
 }
