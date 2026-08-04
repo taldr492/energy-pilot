@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-VERSION = "0.2.88"
+VERSION = "0.2.89"
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 CONFIG_DIR = Path("/config")
@@ -146,6 +146,7 @@ class SetupConfig(BaseModel):
 
 class EnergyPilotConfig(BaseModel):
     version: int = 15
+    revision: int = Field(default=1, ge=1)
     site: SiteConfig = SiteConfig()
     planning: PlanningConfig = PlanningConfig()
     grid_policy: GridPolicyConfig = GridPolicyConfig()
@@ -815,6 +816,7 @@ def migrate_legacy(raw: dict) -> dict:
     version = raw.get("version")
     raw.pop("_meta", None)
     if version == 15:
+        raw.setdefault("revision", 1)
         return raw
     if version == 14:
         raw["version"] = 15
@@ -902,6 +904,7 @@ def migrate_legacy(raw: dict) -> dict:
     grid = raw.get("grid", {})
     return {
         "version": 7,
+        "revision": 1,
         "site": raw.get("site", {}),
         "planning": raw.get("planning", {}),
         "grid_policy": {
@@ -940,11 +943,18 @@ def load_config():
     except Exception as exc:
         raise HTTPException(500, f"Stored configuration is invalid: {exc}")
 
-def save_config(cfg: EnergyPilotConfig):
+def save_config(cfg: EnergyPilotConfig, *, bump_revision: bool = False) -> EnergyPilotConfig:
     cfg.validate_cross_fields()
+    if bump_revision:
+        cfg = cfg.model_copy(update={"revision": max(1, cfg.revision + 1)})
     payload = cfg.model_dump(mode="json")
-    payload["_meta"] = {"saved_at": now(), "app_version": VERSION}
+    payload["_meta"] = {
+        "saved_at": now(),
+        "app_version": VERSION,
+        "config_revision": cfg.revision,
+    }
     atomic_write(CONFIG_FILE, payload)
+    return cfg
 
 def ha_state(entity_id: str):
     if not SUPERVISOR_TOKEN:
@@ -3767,7 +3777,13 @@ def health():
 
 @app.get("/api/config")
 def get_config():
-    return load_config().model_dump()
+    cfg = load_config()
+    payload = cfg.model_dump()
+    payload["_meta"] = {
+        "app_version": VERSION,
+        "config_revision": cfg.revision,
+    }
+    return payload
 
 @app.get("/api/setup/discovery")
 def get_setup_discovery(rescan: bool = False):
@@ -3846,7 +3862,7 @@ def complete_setup(payload: dict):
     }
     raw["version"] = 15
     completed = EnergyPilotConfig.model_validate(raw).validate_cross_fields()
-    save_config(completed)
+    completed = save_config(completed, bump_revision=True)
     HA_STATES_CACHE.update({"fetched_monotonic": 0.0, "result": []})
     return {
         "status": "completed",
@@ -3858,7 +3874,7 @@ def complete_setup(payload: dict):
 def put_config(config: EnergyPilotConfig):
     try:
         config.validate_cross_fields()
-        save_config(config)
+        config = save_config(config, bump_revision=True)
         WEATHER_FORECAST_CACHE.update({"fetched_monotonic": 0.0, "result": None, "error": None})
         return {"status": "saved", "saved_at": now(), "config": config.model_dump()}
     except ValueError as exc:
@@ -3867,7 +3883,7 @@ def put_config(config: EnergyPilotConfig):
 @app.post("/api/config/reset")
 def reset_config():
     cfg = EnergyPilotConfig()
-    save_config(cfg)
+    cfg = save_config(cfg, bump_revision=True)
     WEATHER_FORECAST_CACHE.update({"fetched_monotonic": 0.0, "result": None, "error": None})
     return {"status": "reset", "config": cfg.model_dump()}
 

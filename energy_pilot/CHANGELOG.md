@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.89
+
+- Added configuration revision metadata to the settings API.
+- Exposed the Energy Pilot server version and configuration revision to native clients.
+- Increment configuration revision after successful settings changes.
+
 ## 0.2.88
 
 - Adjusted CSS styling.
