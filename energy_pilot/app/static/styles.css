@@ -3424,167 +3424,156 @@ main {
 	.tab .nav-icon { display: none }
 }
 
+/* Shared Energy Pilot info icon */
+.price-info-button,
+.action-info-button {
+	position: relative;
+	font-size: 0;
+	color: #8fcfff;
+}
 
-/* 0.2.93 — responsive Planner slots; desktop component styling remains unchanged */
-.plan-price-pair > span { display:inline }
-.mobile-plan-net,
-.mobile-plan-meta { display:none }
+.price-info-button::before,
+.action-info-button::before {
+	content: '';
+	position: absolute;
+	inset: 3px;
+	background: currentColor;
+	-webkit-mask: url('about.svg') center / contain no-repeat;
+	mask: url('about.svg') center / contain no-repeat;
+}
+
+.mobile-slot-time,
+.mobile-plan-prices,
+.mobile-slot-meta,
+.mobile-slot-detail {
+	display: none;
+}
 
 @media(max-width:640px) {
-	#plannerPagePlan .plan-table {
-		min-width:0;
-		overflow:visible;
-	}
+	/* Mobile only: reuse desktop typography, badges, paddings and icon sizing. */
 	#plannerPagePlan .plan-row {
-		grid-template-columns:minmax(52px,.62fr) minmax(0,1.35fr) minmax(0,1.05fr);
-		gap:clamp(8px,3.8vw,16px);
-		align-items:start;
-		padding:16px clamp(12px,5.5vw,24px);
+		grid-template-columns: minmax(52px, .7fr) minmax(0, 1.35fr) minmax(0, 1.15fr);
+		gap: 16px;
+		align-items: start;
 	}
-	#plannerPagePlan .plan-row.current-slot {
-		padding-top:38px;
-	}
-	#plannerPagePlan .plan-row.current-slot .current-slot-progress {
-		left:clamp(12px,5.5vw,24px);
-		right:clamp(12px,5.5vw,24px);
-		top:16px;
-		height:6px;
-		border-radius:8px;
-	}
-	#plannerPagePlan .plan-time,
-	#plannerPagePlan .plan-prices,
-	#plannerPagePlan .action-wrap {
-		min-width:0;
-	}
-	#plannerPagePlan .plan-time strong {
-		font-size:clamp(12px,3.6vw,14px);
-		font-weight:400;
-		line-height:1.2;
-		color:#b3c0cb;
-		white-space:normal;
-	}
-	#plannerPagePlan .plan-time strong .manual-badge {
-		display:inline-grid;
-	}
-	#plannerPagePlan .plan-date,
-	#plannerPagePlan .plan-soc-line,
-	#plannerPagePlan .plan-forecast-line,
-	#plannerPagePlan .plan-economics-line,
-	#plannerPagePlan .action-meta,
-	#plannerPagePlan .current-slot-label {
-		display:none;
-	}
+
+	#plannerPagePlan .desktop-slot-time,
+	#plannerPagePlan .plan-time small,
 	#plannerPagePlan .plan-prices {
-		display:flex;
-		flex-direction:column;
-		gap:4px;
+		display: none;
 	}
-	#plannerPagePlan .plan-price-pair {
-		display:flex;
-		flex-direction:column;
-		gap:4px;
-		font-size:clamp(12px,3.6vw,14px);
-		font-weight:700;
-		line-height:1.2;
-		letter-spacing:-.035em;
-		color:#fff;
+
+	#plannerPagePlan .mobile-slot-time,
+	#plannerPagePlan .mobile-plan-prices,
+	#plannerPagePlan .mobile-slot-meta {
+		display: flex;
 	}
-	#plannerPagePlan .desktop-price-separator { display:none }
-	#plannerPagePlan .plan-price-pair .slot-price {
-		padding:0;
-		margin:0;
-		font-size:inherit;
-		font-weight:inherit;
-		text-decoration:none;
+
+	#plannerPagePlan .mobile-slot-time {
+		line-height: 1.35;
 	}
-	#plannerPagePlan .mobile-plan-net {
-		display:block;
-		font-size:clamp(12px,3.6vw,14px);
-		font-weight:400;
-		line-height:1.2;
-		color:#b3c0cb;
+
+	#plannerPagePlan .mobile-plan-prices {
+		min-width: 0;
+		flex-direction: column;
+		gap: 4px;
 	}
+
+	#plannerPagePlan .mobile-plan-prices > span {
+		display: block;
+		min-width: 0;
+		color: var(--muted);
+		font-size: 12px;
+		white-space: nowrap;
+	}
+
+	#plannerPagePlan .mobile-plan-prices > span:nth-child(-n+2),
+	#plannerPagePlan .mobile-plan-prices .slot-price {
+		color: var(--text);
+		font-weight: 750;
+	}
+
+	#plannerPagePlan .mobile-plan-prices .slot-price {
+		font-size: inherit;
+		text-decoration: none;
+		padding: 0;
+		margin: 0;
+	}
+
 	#plannerPagePlan .action-wrap {
-		grid-column:3;
-		grid-row:1;
-		justify-self:stretch;
-		display:grid;
-		grid-template-columns:minmax(0,1fr) 24px;
-		gap:clamp(6px,2.4vw,12px);
-		align-items:center;
+		grid-column: auto;
+		justify-self: stretch;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 22px;
+		gap: 6px;
+		align-items: start;
 	}
-	#plannerPagePlan .action-wrap .plan-action {
-		width:100%;
-		min-width:0;
-		box-sizing:border-box;
-		overflow:hidden;
-		text-overflow:ellipsis;
+
+	#plannerPagePlan .plan-action {
+		width: 100%;
+		box-sizing: border-box;
+		text-align: center;
 	}
+
 	#plannerPagePlan .action-info-button {
-		width:24px;
-		height:24px;
-		border:0;
-		border-radius:0;
-		background:transparent url("about.svg?v=0.2.93") center/24px 24px no-repeat;
-		color:transparent;
-		font-size:0;
-		line-height:0;
+		align-self: start;
 	}
-	#plannerPagePlan .mobile-plan-meta {
-		display:flex;
-		grid-column:3;
-		grid-row:1;
-		align-self:start;
-		flex-direction:column;
-		gap:2px;
-		margin-top:33px;
-		min-width:0;
-		font-size:clamp(10px,3.05vw,12px);
-		line-height:1.2;
-		color:#b3c0cb;
+
+	#plannerPagePlan .action-meta {
+		display: none;
 	}
+
+	#plannerPagePlan .mobile-slot-meta {
+		grid-column: 1 / -1;
+		flex-direction: column;
+		gap: 2px;
+		color: var(--muted);
+		font-size: 12px;
+		line-height: 1.35;
+	}
+
 	#plannerPagePlan .action-tooltip {
-		position:fixed;
-		left:16px;
-		right:16px;
-		bottom:calc(16px + env(safe-area-inset-bottom));
-		top:auto;
-		width:auto;
-		max-width:none;
-		max-height:60vh;
-		overflow:auto;
-		z-index:5000;
-		border-radius:18px;
+		position: fixed;
+		left: 12px;
+		right: 12px;
+		bottom: calc(12px + env(safe-area-inset-bottom));
+		top: auto;
+		width: auto;
+		max-height: min(68vh, 520px);
+		overflow: auto;
+		border-radius: 16px;
+		padding: 16px;
+		z-index: 5000;
 	}
-	#plannerPagePlan .plan-row.manual-override {
-		padding-top:38px;
+
+	#plannerPagePlan .mobile-slot-detail {
+		display: block;
+		margin-top: 12px;
+		padding-top: 8px;
+		border-top: 1px solid rgba(69, 103, 125, .65);
 	}
-	#plannerPagePlan .plan-row.manual-override::before {
-		content:'';
-		position:absolute;
-		left:clamp(12px,5.5vw,24px);
-		right:clamp(12px,5.5vw,24px);
-		top:16px;
-		height:6px;
-		border-radius:8px;
-		background:linear-gradient(90deg,#f48282 0%,#f4c09c 68%,#162b37 68%,#162b37 100%);
+
+	#plannerPagePlan .mobile-detail-row {
+		display: flex;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 5px 0;
+		font-size: 12px;
+	}
+
+	#plannerPagePlan .mobile-detail-row span {
+		color: var(--muted);
+	}
+
+	#plannerPagePlan .mobile-detail-row strong {
+		margin: 0;
+		text-align: right;
 	}
 }
 
-@media(max-width:370px) {
+@media(max-width:390px) {
 	#plannerPagePlan .plan-row {
-		grid-template-columns:minmax(48px,.58fr) minmax(0,1.32fr) minmax(0,1.1fr);
-		gap:7px;
-		padding-left:10px;
-		padding-right:10px;
-	}
-	#plannerPagePlan .action-wrap {
-		grid-template-columns:minmax(0,1fr) 22px;
-		gap:5px;
-	}
-	#plannerPagePlan .action-info-button {
-		width:22px;
-		height:22px;
-		background-size:22px 22px;
+		grid-template-columns: minmax(48px, .62fr) minmax(0, 1.28fr) minmax(0, 1.1fr);
+		gap: 10px;
 	}
 }

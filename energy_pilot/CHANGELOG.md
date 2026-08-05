@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.2.93
+## 0.2.94
+
+- Reworked only the smallest Planner breakpoint while preserving the existing desktop markup and component styling.
+- Reused existing action badges, typography, spacing and button dimensions in the responsive mobile slot layout.
+- Replaced text-based information glyphs globally with the existing Energy Pilot about SVG.
+- Moved mobile-hidden PV, load, confidence and slot economics into the slot information sheet.
+
+## 0.2.91
 
 - Removed the recently added duplicate page headings from Overview, Planner, Insights and Settings.
 - Kept each page’s existing content heading as the single visible title.
