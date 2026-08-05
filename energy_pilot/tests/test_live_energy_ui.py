@@ -61,11 +61,11 @@ class LiveEnergyUiTests(unittest.TestCase):
     def test_frontend_is_served_from_separate_static_assets(self):
         self.assertNotIn("<style>", self.html)
         self.assertNotIn("<script>", self.html)
-        self.assertIn('href="static/styles.css?v=0.2.96-mobile-planner-style-fixes"', self.html)
-        self.assertIn('src="static/app.js?v=0.2.96-mobile-planner-style-fixes"', self.html)
+        self.assertIn('href="static/styles.css?v=0.2.97-mobile-planner-details"', self.html)
+        self.assertIn('src="static/app.js?v=0.2.97-mobile-planner-details"', self.html)
 
     def test_custom_energy_icons_and_favicon_are_used(self):
-        self.assertIn('href="static/house.svg?v=0.2.96"', self.html)
+        self.assertIn('href="static/house.svg?v=0.2.97"', self.html)
 
     def test_price_breakdown_popovers_are_available(self):
         self.assertIn("price-breakdown-trigger", self.js)
@@ -91,6 +91,12 @@ class LiveEnergyUiTests(unittest.TestCase):
         self.assertIn('width: 20px;', self.css)
         self.assertIn('border: 0;', self.css)
         self.assertIn('background: transparent;', self.css)
+
+    def test_mobile_planner_binding_does_not_overwrite_mobile_details(self):
+        self.assertIn("desktopPriceLine=row.querySelector('.desktop-plan-prices > span:first-child')", self.js)
+        self.assertIn("desktopEconomicsLine=row.querySelector('.desktop-plan-prices > span:last-child')", self.js)
+        self.assertNotIn("priceLines=row.querySelectorAll('.plan-prices span')", self.js)
+        self.assertIn("revenue>0.005", self.js)
 
     def test_current_plan_slot_has_progress_treatment(self):
         self.assertIn("function decorateCurrentPlanSlot", self.js)

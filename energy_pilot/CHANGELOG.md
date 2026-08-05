@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.96
+## 0.2.97
 
 - Matched mobile Planner price typography to the existing desktop price style: regular weight, muted color and the same interactive dotted underline.
 - Showed inline revenue only for revenue-generating SELL, PV SELL and upward-dispatch slots.
