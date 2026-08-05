@@ -61,11 +61,11 @@ class LiveEnergyUiTests(unittest.TestCase):
     def test_frontend_is_served_from_separate_static_assets(self):
         self.assertNotIn("<style>", self.html)
         self.assertNotIn("<script>", self.html)
-        self.assertIn('href="static/styles.css?v=0.2.97-mobile-planner-details"', self.html)
-        self.assertIn('src="static/app.js?v=0.2.97-mobile-planner-details"', self.html)
+        self.assertIn('href="static/styles.css?v=0.2.98-native-planner-sheet"', self.html)
+        self.assertIn('src="static/app.js?v=0.2.98-native-planner-sheet"', self.html)
 
     def test_custom_energy_icons_and_favicon_are_used(self):
-        self.assertIn('href="static/house.svg?v=0.2.97"', self.html)
+        self.assertIn('href="static/house.svg?v=0.2.98"', self.html)
 
     def test_price_breakdown_popovers_are_available(self):
         self.assertIn("price-breakdown-trigger", self.js)
@@ -117,6 +117,12 @@ class LiveEnergyUiTests(unittest.TestCase):
         self.assertIn("mask: url('about.svg')", self.css)
         self.assertIn(".price-info-button::before", self.css)
         self.assertIn(".action-info-button::before", self.css)
+
+    def test_native_planner_detail_bridge_is_available(self):
+        self.assertIn("energyPilotPlannerDetail", self.js)
+        self.assertIn("nativePlannerDetail(slot,action,reason,start,end)", self.js)
+        self.assertIn("data-native-detail", self.js)
+        self.assertIn("nativeHandler.postMessage", self.js)
 
     def test_slot_economics_use_user_facing_signs_and_euros(self):
         self.assertIn("function slotEconomicsText(slot)", self.js)
