@@ -2,6 +2,12 @@
 
 ## 0.2.92
 
+- Added the Figma-designed compact Planner slot layout only at the smallest mobile breakpoint.
+- Preserved the existing desktop and tablet Planner markup, typography, badge sizes and spacing.
+- Moved mobile-only slot detail behind the existing info control and updated frontend cache-busting.
+
+## 0.2.91
+
 - Removed the recently added duplicate page headings from Overview, Planner, Insights and Settings.
 - Kept each page’s existing content heading as the single visible title.
 - Bumped frontend asset cache-busting so the corrected layout loads immediately.

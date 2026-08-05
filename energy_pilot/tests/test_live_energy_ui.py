@@ -61,8 +61,8 @@ class LiveEnergyUiTests(unittest.TestCase):
     def test_frontend_is_served_from_separate_static_assets(self):
         self.assertNotIn("<style>", self.html)
         self.assertNotIn("<script>", self.html)
-        self.assertIn('href="static/styles.css?v=0.2.92-compact-planner-mobile"', self.html)
-        self.assertIn('src="static/app.js?v=0.2.92-compact-planner-mobile"', self.html)
+        self.assertIn('href="static/styles.css?v=0.2.92-mobile-planner-only"', self.html)
+        self.assertIn('src="static/app.js?v=0.2.92-mobile-planner-only"', self.html)
 
     def test_custom_energy_icons_and_favicon_are_used(self):
         self.assertIn('href="static/house.svg?v=0.2.92"', self.html)
@@ -83,14 +83,6 @@ class LiveEnergyUiTests(unittest.TestCase):
         self.assertIn("current-slot-progress", self.js)
         self.assertIn(".plan-row.current-slot", self.css)
         self.assertIn("--slot-progress", self.css)
-
-    def test_compact_mobile_planner_markup_and_styles_are_present(self):
-        self.assertIn("function compactPlannerRowMarkup(slot,start,end)", self.js)
-        self.assertIn("compact-planner-plan", self.js)
-        self.assertIn("compactSlotTooltipDetail(slot)", self.js)
-        self.assertIn(".compact-planner-plan .plan-main", self.css)
-        self.assertIn(".compact-planner-plan .action-tooltip", self.css)
-        self.assertIn(".compact-planner-plan .plan-row.manual-override::after", self.css)
 
     def test_slot_economics_use_user_facing_signs_and_euros(self):
         self.assertIn("function slotEconomicsText(slot)", self.js)
