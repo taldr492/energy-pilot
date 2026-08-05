@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 CONFIG_DIR = Path("/config")
@@ -4002,9 +4002,32 @@ def preview_planner_overrides(payload: dict):
         "saved": False,
     }
 
+def native_planner_chart_slots(price: dict) -> list[dict]:
+    """Merge market prices, optimized plan and today's measured history for native charts."""
+    planned = {
+        item.get("start"): item
+        for item in price.get("slots") or []
+        if item.get("start")
+    }
+    history = {
+        item.get("start"): item
+        for item in price.get("history_slots") or []
+        if item.get("start")
+    }
+    result = []
+    for market in price.get("market_slots") or price.get("slots") or []:
+        start = market.get("start")
+        if not start:
+            continue
+        result.append({**market, **planned.get(start, {}), **history.get(start, {})})
+    return result
+
+
 def native_planner_payload(cfg: EnergyPilotConfig) -> dict:
     snapshot = state_snapshot(cfg)
     price = price_snapshot(cfg)
+    history = measurement_history(cfg, snapshot)
+    price["history_slots"] = history["slots"]
     apply_slot_plan(cfg, snapshot, price)
     qilowatt = qilowatt_snapshot(cfg)
     planner = planner_snapshot(cfg, snapshot, price, qilowatt)
@@ -4029,8 +4052,10 @@ def native_planner_payload(cfg: EnergyPilotConfig) -> dict:
                 float(raw.get("grid_import_kw") or 0.0),
             ),
         })
+    quality = plan.get("quality")
+    quality_label = "Forecast connected" if quality == "forecast" else "Limited forecast"
     return {
-        "api_version": 1,
+        "api_version": 2,
         "version": VERSION,
         "observed_at": snapshot.get("observed_at"),
         "summary": {
@@ -4039,16 +4064,33 @@ def native_planner_payload(cfg: EnergyPilotConfig) -> dict:
             "confidence": planner.get("confidence"),
             "execution": planner.get("execution"),
             "behavior_label": planner.get("behavior_label"),
+            "quality": quality,
+            "quality_label": quality_label,
             "horizon_hours": cfg.planning.horizon_hours,
             "initial_soc_percent": plan.get("initial_soc_percent"),
             "final_soc_percent": plan.get("final_soc_percent"),
+            "current_import_cents_kwh": price.get("import_cents_kwh"),
+            "current_export_cents_kwh": price.get("export_cents_kwh"),
             "projected_result_cents": (plan.get("horizon_financial") or {}).get("net_cents"),
+            "projected_gain_cents": plan.get("projected_savings_cents"),
+            "projected_cash_flow_cents": -float(plan.get("projected_cash_cost_cents") or 0.0),
+            "normal_cash_flow_cents": -float(plan.get("normal_cash_cost_cents") or 0.0),
             "battery_wear_cents": (plan.get("horizon_financial") or {}).get("wear_cost_cents"),
             "manual_override_count": plan.get("manual_override_count", 0),
         },
+        "today_financial": plan.get("today_financial") or {},
         "horizon_financial": plan.get("horizon_financial") or {},
         "daily_summary": plan.get("daily_summary") or [],
         "slots": slots,
+        "chart_slots": native_planner_chart_slots(price),
+        "limits": {
+            "max_import_kw": cfg.grid_policy.max_import_kw,
+            "max_export_kw": cfg.grid_policy.max_export_kw,
+            "max_charge_kw": cfg.battery_policy.max_charge_kw,
+            "max_discharge_kw": cfg.battery_policy.max_discharge_kw,
+            "reserve_soc_percent": cfg.battery_policy.reserve_soc_percent,
+            "max_planned_soc_percent": cfg.battery_policy.max_planned_soc_percent,
+        },
         "fallback": {"web_path": "/", "page": "plannerPage"},
     }
 

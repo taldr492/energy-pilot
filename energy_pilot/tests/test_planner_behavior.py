@@ -125,6 +125,76 @@ class PlannerBehaviorTests(unittest.TestCase):
         finally:
             main.CONFIG_DIR, main.CONFIG_FILE = original_dir, original_file
 
+
+    def test_native_planner_chart_slots_merge_plan_and_history(self):
+        start = self.start.isoformat()
+        price = {
+            "market_slots": [{"start": start, "import_cents_kwh": 10.0}],
+            "slots": [{"start": start, "action": "SELL", "soc_after_percent": 70.0}],
+            "history_slots": [{"start": start, "actual": True, "pv_actual_kw": 4.2}],
+        }
+        merged = main.native_planner_chart_slots(price)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["action"], "SELL")
+        self.assertEqual(merged[0]["pv_actual_kw"], 4.2)
+        self.assertTrue(merged[0]["actual"])
+
+    def test_native_planner_payload_exposes_parity_fields(self):
+        cfg = main.EnergyPilotConfig()
+        start = self.start.isoformat()
+        original = (
+            main.state_snapshot, main.price_snapshot, main.measurement_history,
+            main.apply_slot_plan, main.qilowatt_snapshot, main.planner_snapshot,
+        )
+        try:
+            main.state_snapshot = lambda _cfg: {"observed_at": start}
+            main.price_snapshot = lambda _cfg: {
+                "import_cents_kwh": 12.3,
+                "export_cents_kwh": 7.8,
+                "market_slots": [{"start": start, "import_cents_kwh": 12.3, "export_cents_kwh": 7.8}],
+                "slots": [{"start": start, "import_cents_kwh": 12.3, "export_cents_kwh": 7.8}],
+            }
+            main.measurement_history = lambda _cfg, _snapshot: {"slots": [{"start": start, "actual": True, "pv_actual_kw": 1.2}]}
+            def apply(_cfg, _snapshot, price):
+                price["slots"][0].update({
+                    "action": "NORMAL",
+                    "slot_cash_cost_cents": 1.0,
+                    "slot_wear_cost_cents": 0.2,
+                })
+                price["plan"] = {
+                    "quality": "forecast",
+                    "initial_soc_percent": 50.0,
+                    "final_soc_percent": 55.0,
+                    "projected_cash_cost_cents": 25.0,
+                    "normal_cash_cost_cents": 40.0,
+                    "projected_savings_cents": 15.0,
+                    "manual_override_count": 0,
+                    "today_financial": {"net_cents": 10.0},
+                    "horizon_financial": {"net_cents": 20.0, "wear_cost_cents": 2.0},
+                    "daily_summary": [],
+                }
+            main.apply_slot_plan = apply
+            main.qilowatt_snapshot = lambda _cfg: {}
+            main.planner_snapshot = lambda _cfg, _snapshot, _price, _q: {
+                "action": "NORMAL",
+                "reason": "Test",
+                "confidence": 90,
+                "execution": "Simulation only",
+                "behavior_label": "Balanced",
+            }
+            payload = main.native_planner_payload(cfg)
+        finally:
+            (
+                main.state_snapshot, main.price_snapshot, main.measurement_history,
+                main.apply_slot_plan, main.qilowatt_snapshot, main.planner_snapshot,
+            ) = original
+        self.assertEqual(payload["api_version"], 2)
+        self.assertEqual(payload["summary"]["quality_label"], "Forecast connected")
+        self.assertEqual(payload["summary"]["projected_gain_cents"], 15.0)
+        self.assertEqual(payload["today_financial"]["net_cents"], 10.0)
+        self.assertEqual(payload["chart_slots"][0]["pv_actual_kw"], 1.2)
+        self.assertEqual(payload["limits"]["max_export_kw"], cfg.grid_policy.max_export_kw)
+
     def test_complete_slot_plan_runs_with_behavior_policy(self):
         config = main.EnergyPilotConfig()
         start = datetime.now(timezone.utc).replace(second=0, microsecond=0)

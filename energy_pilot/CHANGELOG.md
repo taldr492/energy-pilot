@@ -1,3 +1,9 @@
+## 0.3.1
+
+- Expanded the native Planner API with current prices, forecast quality, projected gain, NORMAL comparison and remaining-today financials.
+- Added merged market, optimized-plan and measured-history chart slots for native Today and Tomorrow views.
+- Kept Planner calculations in the backend while exposing richer typed data to SwiftUI.
+
 ## 0.3.0
 
 - Added typed native Planner API at `/api/planner`.
