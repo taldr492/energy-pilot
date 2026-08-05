@@ -3641,3 +3641,27 @@ main {
 		height: 20px;
 	}
 }
+
+
+/* 0.2.96: mobile Planner uses desktop price typography verbatim. */
+@media(max-width:640px) {
+	#plannerPagePlan .mobile-plan-prices > span,
+	#plannerPagePlan .mobile-plan-prices > span:nth-child(-n+2),
+	#plannerPagePlan .mobile-plan-prices .slot-price {
+		color: var(--muted);
+		font-size: 12px;
+		font-weight: 400;
+		line-height: normal;
+	}
+
+	#plannerPagePlan .mobile-plan-prices .slot-price {
+		font: inherit;
+		color: inherit;
+	}
+
+	#plannerPagePlan .mobile-slot-revenue {
+		color: var(--muted);
+		font-size: 12px;
+		font-weight: 400;
+	}
+}

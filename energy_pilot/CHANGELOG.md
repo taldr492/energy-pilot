@@ -1,10 +1,11 @@
 # Changelog
 
-## 0.2.95
+## 0.2.96
 
-- Removed the duplicated mobile slot time and preserved one responsive time label.
-- Replaced the globally rendered info button chrome with the existing 20 px `about.svg` icon in the established desktop accent color.
-- Restored the desktop price typography and dotted interactive price treatment in the mobile Planner layout.
+- Matched mobile Planner price typography to the existing desktop price style: regular weight, muted color and the same interactive dotted underline.
+- Showed inline revenue only for revenue-generating SELL, PV SELL and upward-dispatch slots.
+- Kept PV/load forecasts, confidence, battery wear, net slot result and other diagnostics behind the existing info icon on mobile.
+- Preserved the corrected single mobile time label and the global 20 px `about.svg` info icon.
 
 ## 0.2.94
 

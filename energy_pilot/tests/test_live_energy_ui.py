@@ -61,11 +61,11 @@ class LiveEnergyUiTests(unittest.TestCase):
     def test_frontend_is_served_from_separate_static_assets(self):
         self.assertNotIn("<style>", self.html)
         self.assertNotIn("<script>", self.html)
-        self.assertIn('href="static/styles.css?v=0.2.95-mobile-planner-style-fixes"', self.html)
-        self.assertIn('src="static/app.js?v=0.2.95-mobile-planner-style-fixes"', self.html)
+        self.assertIn('href="static/styles.css?v=0.2.96-mobile-planner-style-fixes"', self.html)
+        self.assertIn('src="static/app.js?v=0.2.96-mobile-planner-style-fixes"', self.html)
 
     def test_custom_energy_icons_and_favicon_are_used(self):
-        self.assertIn('href="static/house.svg?v=0.2.95"', self.html)
+        self.assertIn('href="static/house.svg?v=0.2.96"', self.html)
 
     def test_price_breakdown_popovers_are_available(self):
         self.assertIn("price-breakdown-trigger", self.js)
