@@ -3577,3 +3577,67 @@ main {
 		gap: 10px;
 	}
 }
+
+/* 0.2.95 planner mobile corrections */
+.price-info-button,
+.action-info-button {
+	width: 20px;
+	height: 20px;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	color: #8fcfff;
+	line-height: 20px;
+}
+
+.price-info-button::before,
+.action-info-button::before {
+	inset: 0;
+}
+
+@media(max-width:640px) {
+	#plannerPagePlan .desktop-slot-time {
+		display: none !important;
+	}
+
+	#plannerPagePlan .mobile-slot-time {
+		display: block !important;
+	}
+
+	#plannerPagePlan .desktop-plan-prices {
+		display: none !important;
+	}
+
+	#plannerPagePlan .mobile-plan-prices {
+		display: flex !important;
+		min-width: 0;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	/* Keep the exact desktop price typography and interactive price styling. */
+	#plannerPagePlan .mobile-plan-prices > span {
+		display: block;
+		min-width: 0;
+		white-space: nowrap;
+	}
+
+	#plannerPagePlan .mobile-plan-prices .slot-price {
+		font-size: inherit;
+		font-weight: inherit;
+		color: inherit;
+		text-decoration: underline dotted rgba(143, 207, 255, .42);
+		text-underline-offset: 5px;
+		padding: 1px 2px;
+		margin: -1px -2px;
+	}
+
+	#plannerPagePlan .action-wrap {
+		grid-template-columns: minmax(0, 1fr) 20px;
+	}
+
+	#plannerPagePlan .action-info-button {
+		width: 20px;
+		height: 20px;
+	}
+}

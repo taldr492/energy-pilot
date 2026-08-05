@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.95
+
+- Removed the duplicated mobile slot time and preserved one responsive time label.
+- Replaced the globally rendered info button chrome with the existing 20 px `about.svg` icon in the established desktop accent color.
+- Restored the desktop price typography and dotted interactive price treatment in the mobile Planner layout.
+
 ## 0.2.94
 
 - Reworked only the smallest Planner breakpoint while preserving the existing desktop markup and component styling.

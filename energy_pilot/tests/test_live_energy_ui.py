@@ -61,11 +61,11 @@ class LiveEnergyUiTests(unittest.TestCase):
     def test_frontend_is_served_from_separate_static_assets(self):
         self.assertNotIn("<style>", self.html)
         self.assertNotIn("<script>", self.html)
-        self.assertIn('href="static/styles.css?v=0.2.94-mobile-planner-existing-components"', self.html)
-        self.assertIn('src="static/app.js?v=0.2.94-mobile-planner-existing-components"', self.html)
+        self.assertIn('href="static/styles.css?v=0.2.95-mobile-planner-style-fixes"', self.html)
+        self.assertIn('src="static/app.js?v=0.2.95-mobile-planner-style-fixes"', self.html)
 
     def test_custom_energy_icons_and_favicon_are_used(self):
-        self.assertIn('href="static/house.svg?v=0.2.94"', self.html)
+        self.assertIn('href="static/house.svg?v=0.2.95"', self.html)
 
     def test_price_breakdown_popovers_are_available(self):
         self.assertIn("price-breakdown-trigger", self.js)
@@ -77,6 +77,20 @@ class LiveEnergyUiTests(unittest.TestCase):
             self.assertIn(f'url("{icon}.svg")', self.css)
         self.assertNotIn("<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"", self.html)
         self.assertTrue(main.STATIC_DIR.is_dir())
+
+    def test_mobile_planner_uses_single_time_and_desktop_price_styles(self):
+        self.assertIn('class="desktop-slot-time"', self.js)
+        self.assertIn('class="mobile-slot-time"', self.js)
+        self.assertIn('class="plan-prices mobile-plan-prices"', self.js)
+        self.assertIn('#plannerPagePlan .desktop-slot-time {', self.css)
+        self.assertIn('display: none !important;', self.css)
+        self.assertIn('text-decoration: underline dotted', self.css)
+
+    def test_global_info_icon_is_existing_svg_without_double_ring(self):
+        self.assertIn("mask: url('about.svg')", self.css)
+        self.assertIn('width: 20px;', self.css)
+        self.assertIn('border: 0;', self.css)
+        self.assertIn('background: transparent;', self.css)
 
     def test_current_plan_slot_has_progress_treatment(self):
         self.assertIn("function decorateCurrentPlanSlot", self.js)
