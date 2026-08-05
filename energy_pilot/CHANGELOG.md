@@ -1,3 +1,9 @@
+## 0.3.0
+
+- Added typed native Planner API at `/api/planner`.
+- Added slot-level revenue, energy cost, wear, net result, and native detail fields.
+- Added selected-slot impact alongside full-horizon manual override preview.
+
 # Changelog
 
 ## 0.2.99

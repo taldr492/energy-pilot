@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-VERSION = "0.2.99"
+VERSION = "0.3.0"
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 CONFIG_DIR = Path("/config")
@@ -3959,7 +3959,27 @@ def preview_planner_overrides(payload: dict):
     if abs(delta_cents) < 0.005:
         warnings.append("This manual command has no material effect on the full planning-horizon result.")
     planner_issue = delta_cents >= issue_threshold_cents
+    selected_keys = {parse_time(stamp).isoformat() for stamp in slots if parse_time(stamp)}
+    def selected_metrics(plan_price: dict) -> dict:
+        selected = [slot for slot in plan_price.get("slots") or [] if parse_time(slot.get("start")) and parse_time(slot.get("start")).isoformat() in selected_keys]
+        export_revenue = sum(max(0.0, -float(slot.get("slot_cash_cost_cents") or 0.0)) for slot in selected)
+        import_cost = sum(max(0.0, float(slot.get("slot_cash_cost_cents") or 0.0)) for slot in selected)
+        wear = sum(float(slot.get("slot_wear_cost_cents") or 0.0) for slot in selected)
+        return {
+            "export_revenue_cents": round(export_revenue, 4),
+            "import_cost_cents": round(import_cost, 4),
+            "wear_cost_cents": round(wear, 4),
+            "net_cents": round(export_revenue - import_cost - wear, 4),
+            "slot_count": len(selected),
+        }
+    selected_baseline = selected_metrics(base_price)
+    selected_candidate = selected_metrics(candidate_price)
     return {
+        "selected_slot_impact": {
+            "baseline": selected_baseline,
+            "candidate": selected_candidate,
+            "delta_cents": round(selected_candidate["net_cents"] - selected_baseline["net_cents"], 4),
+        },
         "baseline": {
             **baseline,
             "final_soc_percent": (base_price.get("plan") or {}).get("final_soc_percent"),
@@ -3981,6 +4001,60 @@ def preview_planner_overrides(payload: dict):
         "warnings": warnings,
         "saved": False,
     }
+
+def native_planner_payload(cfg: EnergyPilotConfig) -> dict:
+    snapshot = state_snapshot(cfg)
+    price = price_snapshot(cfg)
+    apply_slot_plan(cfg, snapshot, price)
+    qilowatt = qilowatt_snapshot(cfg)
+    planner = planner_snapshot(cfg, snapshot, price, qilowatt)
+    plan = price.get("plan") or {}
+    slots = []
+    for raw in price.get("slots") or []:
+        cash_cost = float(raw.get("slot_cash_cost_cents") or 0.0)
+        wear_cost = float(raw.get("slot_wear_cost_cents") or 0.0)
+        revenue = max(0.0, -cash_cost)
+        energy_cost = max(0.0, cash_cost)
+        net = revenue - energy_cost - wear_cost
+        slots.append({
+            **raw,
+            "revenue_cents": round(revenue, 4),
+            "energy_cost_cents": round(energy_cost, 4),
+            "net_slot_result_cents": round(net, 4),
+            "why_here": raw.get("action_reason") or planner.get("reason"),
+            "power_kw": max(
+                float(raw.get("charge_kw") or 0.0),
+                float(raw.get("discharge_kw") or 0.0),
+                float(raw.get("grid_export_kw") or 0.0),
+                float(raw.get("grid_import_kw") or 0.0),
+            ),
+        })
+    return {
+        "api_version": 1,
+        "version": VERSION,
+        "observed_at": snapshot.get("observed_at"),
+        "summary": {
+            "action": planner.get("action"),
+            "reason": planner.get("reason"),
+            "confidence": planner.get("confidence"),
+            "execution": planner.get("execution"),
+            "behavior_label": planner.get("behavior_label"),
+            "horizon_hours": cfg.planning.horizon_hours,
+            "initial_soc_percent": plan.get("initial_soc_percent"),
+            "final_soc_percent": plan.get("final_soc_percent"),
+            "projected_result_cents": (plan.get("horizon_financial") or {}).get("net_cents"),
+            "battery_wear_cents": (plan.get("horizon_financial") or {}).get("wear_cost_cents"),
+            "manual_override_count": plan.get("manual_override_count", 0),
+        },
+        "horizon_financial": plan.get("horizon_financial") or {},
+        "daily_summary": plan.get("daily_summary") or [],
+        "slots": slots,
+        "fallback": {"web_path": "/", "page": "plannerPage"},
+    }
+
+@app.get("/api/planner")
+def get_native_planner():
+    return native_planner_payload(load_config())
 
 @app.get("/api/state")
 def get_state():
