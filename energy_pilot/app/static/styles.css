@@ -3424,123 +3424,126 @@ main {
 	.tab .nav-icon { display: none }
 }
 
-/* 0.2.92 — mobile-only Planner slot layout from Figma node 84:387 */
-.mobile-plan-only{display:none}
 
-@media(max-width:640px){
-	#plannerPagePlan .plan-row{
-		display:block;
-		padding:0;
-		border-bottom:1px solid rgba(42,65,82,.55);
+/* 0.2.93 — responsive Planner slots; desktop component styling remains unchanged */
+.plan-price-pair > span { display:inline }
+.mobile-plan-net,
+.mobile-plan-meta { display:none }
+
+@media(max-width:640px) {
+	#plannerPagePlan .plan-table {
+		min-width:0;
+		overflow:visible;
 	}
-	#plannerPagePlan .plan-row>.plan-time,
-	#plannerPagePlan .plan-row>.plan-prices,
-	#plannerPagePlan .plan-row>.action-wrap{
-		display:none;
-	}
-	#plannerPagePlan .mobile-plan-only{
-		display:block;
-	}
-	#plannerPagePlan .mobile-plan-row{
-		position:relative;
-		display:grid;
-		grid-template-columns:60px minmax(0,131px) minmax(0,131px);
-		gap:16px;
+	#plannerPagePlan .plan-row {
+		grid-template-columns:minmax(52px,.62fr) minmax(0,1.35fr) minmax(0,1.05fr);
+		gap:clamp(8px,3.8vw,16px);
 		align-items:start;
-		padding:16px 24px;
-		color:var(--text);
+		padding:16px clamp(12px,5.5vw,24px);
 	}
-	#plannerPagePlan .plan-row.current-slot .mobile-plan-row{
+	#plannerPagePlan .plan-row.current-slot {
 		padding-top:38px;
 	}
-	#plannerPagePlan .plan-row.current-slot .current-slot-progress{
-		left:24px;
-		right:24px;
+	#plannerPagePlan .plan-row.current-slot .current-slot-progress {
+		left:clamp(12px,5.5vw,24px);
+		right:clamp(12px,5.5vw,24px);
 		top:16px;
 		height:6px;
 		border-radius:8px;
 	}
-	#plannerPagePlan .mobile-plan-time{
-		font-size:14px;
-		line-height:1.2;
-		font-weight:400;
-		color:#b3c0cb;
+	#plannerPagePlan .plan-time,
+	#plannerPagePlan .plan-prices,
+	#plannerPagePlan .action-wrap {
+		min-width:0;
 	}
-	#plannerPagePlan .mobile-plan-prices{
+	#plannerPagePlan .plan-time strong {
+		font-size:clamp(12px,3.6vw,14px);
+		font-weight:400;
+		line-height:1.2;
+		color:#b3c0cb;
+		white-space:normal;
+	}
+	#plannerPagePlan .plan-time strong .manual-badge {
+		display:inline-grid;
+	}
+	#plannerPagePlan .plan-date,
+	#plannerPagePlan .plan-soc-line,
+	#plannerPagePlan .plan-forecast-line,
+	#plannerPagePlan .plan-economics-line,
+	#plannerPagePlan .action-meta,
+	#plannerPagePlan .current-slot-label {
+		display:none;
+	}
+	#plannerPagePlan .plan-prices {
 		display:flex;
 		flex-direction:column;
 		gap:4px;
-		font-size:14px;
-		line-height:1.2;
+	}
+	#plannerPagePlan .plan-price-pair {
+		display:flex;
+		flex-direction:column;
+		gap:4px;
+		font-size:clamp(12px,3.6vw,14px);
 		font-weight:700;
-		letter-spacing:-.04em;
+		line-height:1.2;
+		letter-spacing:-.035em;
 		color:#fff;
 	}
-	#plannerPagePlan .mobile-plan-net{
-		font-weight:400;
-		color:#b3c0cb;
-	}
-	#plannerPagePlan .mobile-plan-action{
-		display:flex;
-		flex-direction:column;
-		gap:8px;
-		min-width:0;
-	}
-	#plannerPagePlan .mobile-action-top{
-		position:relative;
-		display:flex;
-		align-items:center;
-		gap:16px;
-		min-width:0;
-	}
-	#plannerPagePlan .mobile-action-top .plan-action{
-		flex:1 1 auto;
-		min-width:0;
-		padding:4px;
-		border:0;
-		border-radius:4px;
-		font-size:14px;
-		font-weight:700;
-		line-height:normal;
-		letter-spacing:-.04em;
-		text-align:center;
-		color:#071722;
-		background:linear-gradient(107deg,#b3c0cb 0%,#fff 100%);
-	}
-	#plannerPagePlan .mobile-action-top .plan-action.sell{
-		color:#071722;
-		background:linear-gradient(107deg,#09abf3 0%,#00e4ce 100%);
-	}
-	#plannerPagePlan .mobile-action-top .plan-action.protect{
-		color:#071722;
-		background:linear-gradient(107deg,#ea9433 0%,#f6c14d 100%);
-	}
-	#plannerPagePlan .mobile-action-top .plan-action.buy{
-		color:#071722;
-		background:linear-gradient(107deg,#09abf3 0%,#00e4ce 100%);
-	}
-	#plannerPagePlan .mobile-action-top .action-info-button{
-		flex:0 0 24px;
-		width:24px;
-		height:24px;
+	#plannerPagePlan .desktop-price-separator { display:none }
+	#plannerPagePlan .plan-price-pair .slot-price {
 		padding:0;
-		border:1.5px solid #b3c0cb;
-		border-radius:999px;
-		background:transparent;
-		color:#b3c0cb;
-		font-size:15px;
-		font-weight:700;
-		line-height:1;
+		margin:0;
+		font-size:inherit;
+		font-weight:inherit;
+		text-decoration:none;
 	}
-	#plannerPagePlan .mobile-action-meta{
-		display:flex;
-		flex-direction:column;
-		gap:2px;
-		font-size:12px;
+	#plannerPagePlan .mobile-plan-net {
+		display:block;
+		font-size:clamp(12px,3.6vw,14px);
+		font-weight:400;
 		line-height:1.2;
 		color:#b3c0cb;
 	}
-	#plannerPagePlan .mobile-action-top .action-tooltip{
+	#plannerPagePlan .action-wrap {
+		grid-column:3;
+		grid-row:1;
+		justify-self:stretch;
+		display:grid;
+		grid-template-columns:minmax(0,1fr) 24px;
+		gap:clamp(6px,2.4vw,12px);
+		align-items:center;
+	}
+	#plannerPagePlan .action-wrap .plan-action {
+		width:100%;
+		min-width:0;
+		box-sizing:border-box;
+		overflow:hidden;
+		text-overflow:ellipsis;
+	}
+	#plannerPagePlan .action-info-button {
+		width:24px;
+		height:24px;
+		border:0;
+		border-radius:0;
+		background:transparent url("about.svg?v=0.2.93") center/24px 24px no-repeat;
+		color:transparent;
+		font-size:0;
+		line-height:0;
+	}
+	#plannerPagePlan .mobile-plan-meta {
+		display:flex;
+		grid-column:3;
+		grid-row:1;
+		align-self:start;
+		flex-direction:column;
+		gap:2px;
+		margin-top:33px;
+		min-width:0;
+		font-size:clamp(10px,3.05vw,12px);
+		line-height:1.2;
+		color:#b3c0cb;
+	}
+	#plannerPagePlan .action-tooltip {
 		position:fixed;
 		left:16px;
 		right:16px;
@@ -3553,17 +3556,35 @@ main {
 		z-index:5000;
 		border-radius:18px;
 	}
-	#plannerPagePlan .mobile-plan-row.manual-override{
+	#plannerPagePlan .plan-row.manual-override {
 		padding-top:38px;
 	}
-	#plannerPagePlan .mobile-plan-row.manual-override:before{
+	#plannerPagePlan .plan-row.manual-override::before {
 		content:'';
 		position:absolute;
-		left:24px;
-		right:24px;
+		left:clamp(12px,5.5vw,24px);
+		right:clamp(12px,5.5vw,24px);
 		top:16px;
 		height:6px;
 		border-radius:8px;
 		background:linear-gradient(90deg,#f48282 0%,#f4c09c 68%,#162b37 68%,#162b37 100%);
+	}
+}
+
+@media(max-width:370px) {
+	#plannerPagePlan .plan-row {
+		grid-template-columns:minmax(48px,.58fr) minmax(0,1.32fr) minmax(0,1.1fr);
+		gap:7px;
+		padding-left:10px;
+		padding-right:10px;
+	}
+	#plannerPagePlan .action-wrap {
+		grid-template-columns:minmax(0,1fr) 22px;
+		gap:5px;
+	}
+	#plannerPagePlan .action-info-button {
+		width:22px;
+		height:22px;
+		background-size:22px 22px;
 	}
 }

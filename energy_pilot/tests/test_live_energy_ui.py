@@ -61,11 +61,11 @@ class LiveEnergyUiTests(unittest.TestCase):
     def test_frontend_is_served_from_separate_static_assets(self):
         self.assertNotIn("<style>", self.html)
         self.assertNotIn("<script>", self.html)
-        self.assertIn('href="static/styles.css?v=0.2.92-mobile-planner-only"', self.html)
-        self.assertIn('src="static/app.js?v=0.2.92-mobile-planner-only"', self.html)
+        self.assertIn('href="static/styles.css?v=0.2.93-responsive-mobile-planner"', self.html)
+        self.assertIn('src="static/app.js?v=0.2.93-responsive-mobile-planner"', self.html)
 
     def test_custom_energy_icons_and_favicon_are_used(self):
-        self.assertIn('href="static/house.svg?v=0.2.92"', self.html)
+        self.assertIn('href="static/house.svg?v=0.2.93"', self.html)
 
     def test_price_breakdown_popovers_are_available(self):
         self.assertIn("price-breakdown-trigger", self.js)
@@ -83,6 +83,14 @@ class LiveEnergyUiTests(unittest.TestCase):
         self.assertIn("current-slot-progress", self.js)
         self.assertIn(".plan-row.current-slot", self.css)
         self.assertIn("--slot-progress", self.css)
+
+    def test_mobile_planner_reuses_existing_components_and_is_responsive(self):
+        self.assertIn("function mobileSlotPower(slot,action)", self.js)
+        self.assertIn("${actionMarkup(action,slot.action_reason||'')}", self.js)
+        self.assertIn('background:transparent url("about.svg?v=0.2.93")', self.css)
+        self.assertIn("grid-template-columns:minmax(52px,.62fr)", self.css)
+        self.assertIn("@media(max-width:370px)", self.css)
+        self.assertNotIn("grid-template-columns:60px minmax(0,131px) minmax(0,131px)", self.css)
 
     def test_slot_economics_use_user_facing_signs_and_euros(self):
         self.assertIn("function slotEconomicsText(slot)", self.js)
