@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-VERSION = "0.3.4"
+VERSION = "0.3.5"
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 CONFIG_DIR = Path("/config")
@@ -78,6 +78,9 @@ class BatteryPolicyConfig(BaseModel):
     degradation_cost_cents_kwh: float = Field(default=0.0, ge=0, le=100)
     system_cost_eur: float = Field(default=0.0, ge=0, le=1000000)
     warranted_cycles: int = Field(default=6000, gt=0, le=100000)
+
+class EconomicsConfig(BaseModel):
+    pv_system_cost_eur: float = Field(default=0.0, ge=0, le=10000000)
 
 class ForecastConnectorConfig(BaseModel):
     pv_forecast_entity: str = ""
@@ -145,12 +148,13 @@ class SetupConfig(BaseModel):
     auto_discovery: bool = True
 
 class EnergyPilotConfig(BaseModel):
-    version: int = 15
+    version: int = 16
     revision: int = Field(default=1, ge=1)
     site: SiteConfig = SiteConfig()
     planning: PlanningConfig = PlanningConfig()
     grid_policy: GridPolicyConfig = GridPolicyConfig()
     battery_policy: BatteryPolicyConfig = BatteryPolicyConfig()
+    economics: EconomicsConfig = EconomicsConfig()
     battery_connector: BatteryConnectorConfig = BatteryConnectorConfig()
     power_connector: PowerConnectorConfig = PowerConnectorConfig()
     forecast_connector: ForecastConnectorConfig = ForecastConnectorConfig()
@@ -823,8 +827,13 @@ def apply_detected_price_vat(raw: dict) -> bool:
 def migrate_legacy(raw: dict) -> dict:
     version = raw.get("version")
     raw.pop("_meta", None)
-    if version == 15:
+    if version == 16:
         raw.setdefault("revision", 1)
+        return raw
+    if version == 15:
+        raw["version"] = 16
+        raw.setdefault("revision", 1)
+        raw.setdefault("economics", EconomicsConfig().model_dump())
         return raw
     if version == 14:
         raw["version"] = 15
@@ -924,6 +933,7 @@ def migrate_legacy(raw: dict) -> dict:
             "reserve_soc_percent": battery.get("min_soc_percent", 15.0),
             "max_planned_soc_percent": battery.get("max_soc_percent", 100.0),
         },
+        "economics": EconomicsConfig().model_dump(),
         "battery_connector": BatteryConnectorConfig().model_dump(),
         "power_connector": PowerConnectorConfig().model_dump(),
         "forecast_connector": ForecastConnectorConfig().model_dump(),
@@ -942,10 +952,10 @@ def load_config():
         raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         stored_version = raw.get("version")
         migrated = migrate_legacy(raw)
-        migrated["version"] = 15
+        migrated["version"] = 16
         price_vat_detected = apply_detected_price_vat(migrated)
         cfg = EnergyPilotConfig.model_validate(migrated).validate_cross_fields()
-        if stored_version != 15 or price_vat_detected:
+        if stored_version != 16 or price_vat_detected:
             save_config(cfg)
         return cfg
     except Exception as exc:
@@ -4268,6 +4278,104 @@ def monthly_benefits(cfg: EnergyPilotConfig, snapshot: dict, price: dict) -> dic
         "result_after_wear_cents": round(data["export_revenue_cents"] - data["import_cost_cents"] - data["wear_cost_cents"], 2),
     }
 
+
+def energy_value_payload(cfg: EnergyPilotConfig, snapshot: dict, price: dict, measured: dict) -> dict:
+    """Build the Overview Energy value card from measured month data and the active Planner horizon."""
+    plan = price.get("plan") or {}
+    horizon_financial = plan.get("horizon_financial") or {}
+    slots = price.get("slots") or []
+    duration_hours = cfg.planning.slot_minutes / 60.0
+    horizon_import_kwh = sum(float(slot.get("grid_import_kw") or 0.0) * duration_hours for slot in slots)
+    horizon_export_kwh = sum(float(slot.get("grid_export_kw") or 0.0) * duration_hours for slot in slots)
+    horizon_import_cost = float(horizon_financial.get("import_cost_cents") or 0.0)
+    horizon_export_revenue = float(horizon_financial.get("export_revenue_cents") or 0.0)
+    horizon_wear = float(horizon_financial.get("wear_cost_cents") or 0.0)
+    horizon_bill_result = horizon_export_revenue - horizon_import_cost
+    horizon_after_wear = horizon_bill_result - horizon_wear
+    horizon_minutes = sum(
+        cfg.planning.slot_minutes
+        for slot in slots
+        if str(slot.get("action") or "").upper() == "LIMIT EXPORT"
+    )
+
+    observed = parse_time(snapshot.get("observed_at")) or datetime.now(timezone.utc)
+    local_observed = observed.astimezone(ZoneInfo(cfg.site.timezone))
+    measured_bill_result = float(measured.get("bill_result_cents") or 0.0)
+    measured_after_wear = float(measured.get("result_after_wear_cents") or 0.0)
+    tracking_since = parse_time(measured.get("tracking_since"))
+    elapsed_days = max(
+        1.0 / 24.0,
+        (observed - tracking_since).total_seconds() / 86400.0 if tracking_since else 0.0,
+    )
+    horizon_days = max(1.0 / 24.0, cfg.planning.horizon_hours / 24.0)
+    measured_daily = measured_after_wear / elapsed_days
+    horizon_daily = horizon_after_wear / horizon_days
+    measured_weight = min(1.0, elapsed_days / 14.0)
+    if measured_daily > 0 and horizon_daily > 0:
+        projected_daily_cents = measured_daily * measured_weight + horizon_daily * (1.0 - measured_weight)
+        projection_basis = "blended_measured_and_planner"
+    elif measured_daily > 0:
+        projected_daily_cents = measured_daily
+        projection_basis = "measured_run_rate"
+    elif horizon_daily > 0:
+        projected_daily_cents = horizon_daily
+        projection_basis = "planner_run_rate"
+    else:
+        projected_daily_cents = 0.0
+        projection_basis = "unavailable"
+
+    battery_cost = float(cfg.battery_policy.system_cost_eur or 0.0)
+    pv_cost = float(cfg.economics.pv_system_cost_eur or 0.0)
+    total_cost = battery_cost + pv_cost
+    annualized_owner_value_eur = projected_daily_cents * 365.25 / 100.0
+    payback_months = (
+        total_cost / annualized_owner_value_eur * 12.0
+        if total_cost > 0 and annualized_owner_value_eur > 0 else None
+    )
+
+    month_period = str(measured.get("period") or local_observed.strftime("%Y-%m"))
+    return {
+        "measured": {
+            "kind": "measured",
+            "period": month_period,
+            "period_label": local_observed.strftime("%b %Y"),
+            "tracking_since": measured.get("tracking_since"),
+            "bill_result_cents": round(measured_bill_result, 2),
+            "invoice_amount_cents": round(-measured_bill_result, 2),
+            "export_revenue_cents": round(float(measured.get("export_revenue_cents") or 0.0), 2),
+            "export_kwh": round(float(measured.get("export_kwh") or 0.0), 3),
+            "import_cost_cents": round(float(measured.get("import_cost_cents") or 0.0), 2),
+            "import_kwh": round(float(measured.get("import_kwh") or 0.0), 3),
+            "wear_cost_cents": round(float(measured.get("wear_cost_cents") or 0.0), 2),
+            "result_after_wear_cents": round(measured_after_wear, 2),
+            "price_protection_minutes": round(float(measured.get("negative_price_protection_minutes") or 0.0), 1),
+        },
+        "planning_horizon": {
+            "kind": "projected",
+            "period": f"{cfg.planning.horizon_hours}h",
+            "period_label": f"{cfg.planning.horizon_hours} h",
+            "tracking_since": snapshot.get("observed_at"),
+            "bill_result_cents": round(horizon_bill_result, 2),
+            "invoice_amount_cents": round(-horizon_bill_result, 2),
+            "export_revenue_cents": round(horizon_export_revenue, 2),
+            "export_kwh": round(horizon_export_kwh, 3),
+            "import_cost_cents": round(horizon_import_cost, 2),
+            "import_kwh": round(horizon_import_kwh, 3),
+            "wear_cost_cents": round(horizon_wear, 2),
+            "result_after_wear_cents": round(horizon_after_wear, 2),
+            "price_protection_minutes": round(float(horizon_minutes), 1),
+        },
+        "investment": {
+            "battery_system_cost_eur": round(battery_cost, 2),
+            "pv_system_cost_eur": round(pv_cost, 2),
+            "total_system_cost_eur": round(total_cost, 2),
+            "annualized_owner_value_eur": round(annualized_owner_value_eur, 2),
+            "projected_payback_months": round(payback_months, 1) if payback_months is not None else None,
+            "projection_basis": projection_basis,
+        },
+    }
+
+
 @app.get("/api/insights")
 def get_insights(period: str = "month", start: Optional[str] = None, end: Optional[str] = None):
     if period not in {"week", "month", "year", "custom", "lifetime"}:
@@ -4290,10 +4398,11 @@ def get_overview():
     record_insights(cfg, snapshot, price)
     qilowatt = qilowatt_snapshot(cfg)
     benefits = monthly_benefits(cfg, snapshot, price)
+    energy_value = energy_value_payload(cfg, snapshot, price, benefits)
     update_learning(cfg, snapshot, price)
     planner = planner_snapshot(cfg, snapshot, price, qilowatt)
     return {
-        "api_version": 2,
+        "api_version": 3,
         "version": VERSION,
         "observed_at": snapshot["observed_at"],
         "site": {"name": cfg.site.name},
@@ -4305,6 +4414,7 @@ def get_overview():
         "qilowatt": qilowatt,
         "price": price,
         "benefits_month": benefits,
+        "energy_value": energy_value,
         "metrics": overview_metrics(snapshot),
         "runtime": {
             "mode": cfg.runtime.mode,

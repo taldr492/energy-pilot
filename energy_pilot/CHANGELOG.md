@@ -1,3 +1,11 @@
+## 0.3.5
+
+- Added the typed Overview Energy value payload for measured month-to-date and the current Planner horizon.
+- Added PV park investment cost alongside battery system cost and exposed both in native and web settings.
+- Added payback projection metadata based on measured and Planner owner-value run rates.
+- Added immediate native Overview refresh after applying or removing a manual Planner command.
+- Added the native SwiftUI Energy value card matching the Figma layout.
+
 ## 0.3.4
 
 - Canonicalized manual Planner slot timestamps to UTC so commands saved by iOS match plan slots returned in the site timezone.

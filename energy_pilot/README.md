@@ -1,4 +1,4 @@
-# Energy Pilot 0.3.4
+# Energy Pilot 0.3.5
 
 ## Frontend files
 

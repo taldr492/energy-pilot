@@ -116,12 +116,12 @@ class PlannerBehaviorTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 config = main.load_config()
-                self.assertEqual(config.version, 15)
+                self.assertEqual(config.version, 16)
                 self.assertEqual(config.planning.behavior_profile, "balanced")
                 self.assertEqual(config.qilowatt.mode, "disabled")
                 self.assertTrue(config.setup.completed)
                 stored = json.loads(main.CONFIG_FILE.read_text(encoding="utf-8"))
-                self.assertEqual(stored["version"], 15)
+                self.assertEqual(stored["version"], 16)
         finally:
             main.CONFIG_DIR, main.CONFIG_FILE = original_dir, original_file
 
