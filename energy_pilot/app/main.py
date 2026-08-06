@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-VERSION = "0.3.6"
+VERSION = "0.3.7"
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 CONFIG_DIR = Path("/config")
@@ -42,6 +42,8 @@ HISTORY_CACHE: dict = {"loaded": False, "data": {}, "last_backfill_monotonic": 0
 HISTORY_LOCK = threading.RLock()
 INSIGHTS_CACHE: dict = {"loaded": False, "data": {}, "last_saved_monotonic": 0.0}
 INSIGHTS_LOCK = threading.RLock()
+PAYBACK_CACHE: dict = {"bucket": None, "signature": None, "result": None}
+PAYBACK_LOCK = threading.RLock()
 
 app = FastAPI(title="Energy Pilot", version=VERSION)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -653,6 +655,7 @@ def insight_slot(data: dict, bucket: datetime) -> dict:
         "export_revenue_cents": 0.0,
         "baseline_grid_cost_cents": 0.0,
         "avoided_import_savings_cents": 0.0,
+        "solar_self_consumption_savings_cents": 0.0,
         "grid_charging_cost_cents": 0.0,
         "owner_value_before_wear_cents": 0.0,
         "owner_value_after_wear_cents": 0.0,
@@ -738,15 +741,18 @@ def record_insights(cfg: EnergyPilotConfig, snapshot: dict, price: dict) -> None
         baseline_cost = 0.0
         avoided_savings = 0.0
         grid_charging_cost = 0.0
+        solar_self_consumption_savings = 0.0
         if import_price is not None:
             import_price = float(import_price)
             import_cost = additions["grid_import_kwh"] * import_price
             baseline_cost = additions["load_kwh"] * import_price
             avoided_savings = additions["self_supplied_kwh"] * import_price
+            solar_self_consumption_savings = additions["solar_self_consumed_kwh"] * import_price
             grid_charging_cost = additions["grid_to_battery_kwh"] * import_price
             slot["import_cost_cents"] = float(slot.get("import_cost_cents") or 0.0) + import_cost
             slot["baseline_grid_cost_cents"] = float(slot.get("baseline_grid_cost_cents") or 0.0) + baseline_cost
             slot["avoided_import_savings_cents"] = float(slot.get("avoided_import_savings_cents") or 0.0) + avoided_savings
+            slot["solar_self_consumption_savings_cents"] = float(slot.get("solar_self_consumption_savings_cents") or 0.0) + solar_self_consumption_savings
             slot["grid_charging_cost_cents"] = float(slot.get("grid_charging_cost_cents") or 0.0) + grid_charging_cost
         if export_price is not None:
             export_revenue = additions["grid_export_kwh"] * float(export_price)
@@ -800,6 +806,24 @@ def insight_period_bounds(cfg: EnergyPilotConfig, period: str, start: Optional[s
     return local_start.astimezone(timezone.utc), local_end.astimezone(timezone.utc)
 
 
+def insight_metric_value(slot: dict, key: str) -> float:
+    """Read an insight metric and derive direct PV savings for pre-0.3.7 slots."""
+    if key != "solar_self_consumption_savings_cents" or key in slot:
+        return float(slot.get(key) or 0.0)
+    solar_kwh = float(slot.get("solar_self_consumed_kwh") or 0.0)
+    load_kwh = float(slot.get("load_kwh") or 0.0)
+    grid_import_kwh = float(slot.get("grid_import_kwh") or 0.0)
+    baseline_cost = float(slot.get("baseline_grid_cost_cents") or 0.0)
+    import_cost = float(slot.get("import_cost_cents") or 0.0)
+    if load_kwh > 0 and baseline_cost != 0:
+        import_price = baseline_cost / load_kwh
+    elif grid_import_kwh > 0 and import_cost != 0:
+        import_price = import_cost / grid_import_kwh
+    else:
+        import_price = 0.0
+    return solar_kwh * import_price
+
+
 def insights_summary(cfg: EnergyPilotConfig, period: str = "month", start: Optional[str] = None, end: Optional[str] = None) -> dict:
     with INSIGHTS_LOCK:
         data = load_insights_ledger()
@@ -812,11 +836,11 @@ def insights_summary(cfg: EnergyPilotConfig, period: str = "month", start: Optio
         "pv_kwh", "load_kwh", "solar_self_consumed_kwh", "grid_import_kwh",
         "grid_export_kwh", "grid_to_load_kwh", "grid_to_battery_kwh", "self_supplied_kwh",
         "battery_throughput_kwh", "import_cost_cents", "export_revenue_cents",
-        "baseline_grid_cost_cents", "avoided_import_savings_cents", "grid_charging_cost_cents",
+        "baseline_grid_cost_cents", "avoided_import_savings_cents", "solar_self_consumption_savings_cents", "grid_charging_cost_cents",
         "owner_value_before_wear_cents", "owner_value_after_wear_cents",
         "battery_wear_cents", "negative_price_protection_minutes",
     )
-    totals = {key: sum(float(slot.get(key) or 0.0) for slot in selected) for key in metric_keys}
+    totals = {key: sum(insight_metric_value(slot, key) for slot in selected) for key in metric_keys}
     bill_result = totals["export_revenue_cents"] - totals["import_cost_cents"]
     after_wear = bill_result - totals["battery_wear_cents"]
     zone = ZoneInfo(cfg.site.timezone)
@@ -828,7 +852,7 @@ def insights_summary(cfg: EnergyPilotConfig, period: str = "month", start: Optio
         key = local.strftime("%Y-%m" if group_monthly else "%Y-%m-%d")
         row = grouped.setdefault(key, {"period": key})
         for metric in metric_keys:
-            row[metric] = float(row.get(metric) or 0.0) + float(slot.get(metric) or 0.0)
+            row[metric] = float(row.get(metric) or 0.0) + insight_metric_value(slot, metric)
     series = []
     for key in sorted(grouped):
         row = grouped[key]
@@ -4428,6 +4452,108 @@ def monthly_benefits(cfg: EnergyPilotConfig, snapshot: dict, price: dict) -> dic
     }
 
 
+def _robust_mean(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(float(value) for value in values)
+    if len(ordered) >= 7:
+        ordered = ordered[1:-1]
+    return sum(ordered) / len(ordered)
+
+
+def completed_owner_daily_samples(cfg: EnergyPilotConfig, observed: datetime) -> tuple[list[float], float]:
+    """Return normalized owner-value samples for completed local calendar days only."""
+    cutoff = history_bucket(observed)
+    zone = ZoneInfo(cfg.site.timezone)
+    current_local_day = observed.astimezone(zone).date()
+    with INSIGHTS_LOCK:
+        slots = [dict(slot) for slot in load_insights_ledger().get("slots", {}).values()]
+    grouped: dict[str, dict[str, float]] = {}
+    for slot in slots:
+        start = parse_time(slot.get("start"))
+        end = parse_time(slot.get("end"))
+        if not start or not end or end > cutoff:
+            continue
+        local_day = start.astimezone(zone).date()
+        if local_day >= current_local_day:
+            continue
+        row = grouped.setdefault(local_day.isoformat(), {"value": 0.0, "coverage": 0.0})
+        row["value"] += float(slot.get("owner_value_after_wear_cents") or 0.0)
+        row["coverage"] += float(slot.get("owner_coverage_seconds") or 0.0)
+    samples: list[float] = []
+    coverage_hours = 0.0
+    for key in sorted(grouped):
+        row = grouped[key]
+        hours = row["coverage"] / 3600.0
+        coverage_hours += hours
+        if hours < 20.0:
+            continue
+        # Correct only small recorder gaps; never inflate a partial day aggressively.
+        scale = min(1.15, 24.0 / max(20.0, hours))
+        samples.append(row["value"] * scale)
+    return samples[-30:], coverage_hours
+
+
+def stable_payback_projection(
+    cfg: EnergyPilotConfig,
+    observed: datetime,
+    horizon_daily_cents: float,
+) -> dict:
+    """Update the investment projection once per completed 15-minute bucket."""
+    bucket = history_bucket(observed)
+    battery_cost = float(cfg.battery_policy.system_cost_eur or 0.0)
+    pv_cost = float(cfg.economics.pv_system_cost_eur or 0.0)
+    signature = (bucket.isoformat(), cfg.revision, round(battery_cost, 2), round(pv_cost, 2), cfg.planning.horizon_hours)
+    with PAYBACK_LOCK:
+        if PAYBACK_CACHE.get("signature") == signature and PAYBACK_CACHE.get("result") is not None:
+            return dict(PAYBACK_CACHE["result"])
+
+        samples, coverage_hours = completed_owner_daily_samples(cfg, observed)
+        recent_7 = samples[-7:]
+        recent_30 = samples[-30:]
+        avg_7 = _robust_mean(recent_7)
+        avg_30 = _robust_mean(recent_30)
+        day_count = len(samples)
+
+        if day_count >= 30:
+            projected_daily_cents = avg_30 * 0.65 + avg_7 * 0.25 + horizon_daily_cents * 0.10
+            basis = "rolling_7_30_day_owner_value"
+        elif day_count >= 7:
+            projected_daily_cents = avg_7 * 0.55 + avg_30 * 0.25 + horizon_daily_cents * 0.20
+            basis = "rolling_7_day_owner_value"
+        elif day_count > 0:
+            measured_weight = min(0.55, day_count / 7.0 * 0.55)
+            projected_daily_cents = avg_30 * measured_weight + horizon_daily_cents * (1.0 - measured_weight)
+            basis = "completed_days_plus_planner"
+        else:
+            projected_daily_cents = horizon_daily_cents
+            basis = "planner_owner_value" if horizon_daily_cents else "unavailable"
+
+        total_cost = battery_cost + pv_cost
+        annualized_owner_value_eur = projected_daily_cents * 365.25 / 100.0
+        payback_months = (
+            total_cost / annualized_owner_value_eur * 12.0
+            if total_cost > 0 and annualized_owner_value_eur > 0 else None
+        )
+        result = {
+            "battery_system_cost_eur": round(battery_cost, 2),
+            "pv_system_cost_eur": round(pv_cost, 2),
+            "total_system_cost_eur": round(total_cost, 2),
+            "annualized_owner_value_eur": round(annualized_owner_value_eur, 2),
+            "projected_payback_months": round(payback_months, 1) if payback_months is not None else None,
+            "projection_basis": basis,
+            "projection_is_preliminary": day_count < 30,
+            "projection_coverage_days": float(day_count),
+            "projection_coverage_hours": round(coverage_hours, 1),
+            "projection_updated_at": bucket.isoformat(),
+            "projection_update_interval_minutes": cfg.planning.slot_minutes,
+            "projection_sample_days": day_count,
+            "includes_avoided_grid_purchases": True,
+        }
+        PAYBACK_CACHE.update({"bucket": bucket.isoformat(), "signature": signature, "result": result})
+        return dict(result)
+
+
 def energy_value_payload(
     cfg: EnergyPilotConfig,
     snapshot: dict,
@@ -4480,44 +4606,9 @@ def energy_value_payload(
     measured_owner_before_wear = float(measured.get("owner_value_before_wear_cents") or 0.0)
     measured_owner_after_wear = float(measured.get("owner_value_after_wear_cents") or 0.0)
 
-    history = owner_history or {}
-    history_totals = history.get("totals") or {}
-    history_owner_after_wear = float(history_totals.get("owner_value_after_wear_cents") or 0.0)
-    owner_tracking_since_raw = history.get("owner_tracking_since") or measured.get("owner_tracking_since")
-    owner_tracking_since = parse_time(owner_tracking_since_raw)
-    owner_elapsed_days = max(
-        1.0 / 24.0,
-        (observed - owner_tracking_since).total_seconds() / 86400.0 if owner_tracking_since else 0.0,
-    )
-    owner_coverage_hours = float((history.get("data_quality") or {}).get("owner_coverage_hours") or 0.0)
-    measured_available = bool(owner_tracking_since and owner_coverage_hours >= 1.0)
-    measured_daily = history_owner_after_wear / owner_elapsed_days if measured_available else 0.0
     horizon_days = max(1.0 / 24.0, cfg.planning.horizon_hours / 24.0)
-    horizon_available = bool(slots)
-    horizon_daily = horizon_owner_after_wear / horizon_days if horizon_available else 0.0
-    measured_weight = min(0.85, owner_elapsed_days / 30.0) if measured_available else 0.0
-    if measured_available and horizon_available:
-        projected_daily_cents = measured_daily * measured_weight + horizon_daily * (1.0 - measured_weight)
-        projection_basis = "blended_owner_value"
-    elif measured_available:
-        projected_daily_cents = measured_daily
-        projection_basis = "measured_owner_value"
-    elif horizon_available:
-        projected_daily_cents = horizon_daily
-        projection_basis = "planner_owner_value"
-    else:
-        projected_daily_cents = 0.0
-        projection_basis = "unavailable"
-
-    projection_preliminary = owner_elapsed_days < 30.0 or owner_coverage_hours < 24.0 * 7.0
-    battery_cost = float(cfg.battery_policy.system_cost_eur or 0.0)
-    pv_cost = float(cfg.economics.pv_system_cost_eur or 0.0)
-    total_cost = battery_cost + pv_cost
-    annualized_owner_value_eur = projected_daily_cents * 365.25 / 100.0
-    payback_months = (
-        total_cost / annualized_owner_value_eur * 12.0
-        if total_cost > 0 and annualized_owner_value_eur > 0 else None
-    )
+    horizon_daily = horizon_owner_after_wear / horizon_days if slots else 0.0
+    investment = stable_payback_projection(cfg, observed, horizon_daily)
 
     month_period = str(measured.get("period") or local_observed.strftime("%Y-%m"))
     return {
@@ -4569,18 +4660,7 @@ def energy_value_payload(
             "result_after_wear_cents": round(horizon_owner_after_wear, 2),
             "price_protection_minutes": round(float(horizon_minutes), 1),
         },
-        "investment": {
-            "battery_system_cost_eur": round(battery_cost, 2),
-            "pv_system_cost_eur": round(pv_cost, 2),
-            "total_system_cost_eur": round(total_cost, 2),
-            "annualized_owner_value_eur": round(annualized_owner_value_eur, 2),
-            "projected_payback_months": round(payback_months, 1) if payback_months is not None else None,
-            "projection_basis": projection_basis,
-            "projection_is_preliminary": projection_preliminary,
-            "projection_coverage_days": round(owner_elapsed_days, 1) if owner_tracking_since else 0.0,
-            "projection_coverage_hours": round(owner_coverage_hours, 1),
-            "includes_avoided_grid_purchases": True,
-        },
+        "investment": investment,
     }
 
 
@@ -4611,7 +4691,7 @@ def get_overview():
     update_learning(cfg, snapshot, price)
     planner = planner_snapshot(cfg, snapshot, price, qilowatt)
     return {
-        "api_version": 4,
+        "api_version": 5,
         "version": VERSION,
         "observed_at": snapshot["observed_at"],
         "site": {"name": cfg.site.name},

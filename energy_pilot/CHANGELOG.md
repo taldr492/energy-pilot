@@ -1,3 +1,11 @@
+## 0.3.7
+
+- Stabilized system payback so it updates once per completed 15-minute bucket instead of every live Overview refresh.
+- Replaced second-by-second annualization with robust completed-day owner-value samples and weighted 7/30-day rolling averages.
+- Simplified payback wording to `About X years` without false month-level precision.
+- Added direct PV self-consumption savings to the Insights API and selected-period Insights cards.
+- Backfilled PV self-consumption savings for older ledger slots when an effective import price can be derived.
+
 ## 0.3.6
 
 - Corrected Energy value payback to include electricity purchases avoided when PV or battery supplies the home.

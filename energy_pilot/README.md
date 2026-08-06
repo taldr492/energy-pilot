@@ -1,4 +1,4 @@
-# Energy Pilot 0.3.6
+# Energy Pilot 0.3.7
 
 ## Frontend files
 
@@ -33,7 +33,7 @@ period or the complete retained history.
 
 The **Energy bill result** is export revenue minus import cost. Estimated
 battery wear is shown separately because it is an ownership cost estimate, not
-an item on the electricity bill. Owner value is calculated against a no-system baseline: grid purchases avoided by PV and battery plus export revenue, minus grid-charging cost and battery wear. The payback projection uses this owner value instead of electricity-bill cash flow alone. New owner-value tracking starts automatically when 0.3.6 is installed, so early projections are marked preliminary.
+an item on the electricity bill. Owner value is calculated against a no-system baseline: grid purchases avoided by PV and battery plus export revenue, minus grid-charging cost and battery wear. The payback projection uses this owner value instead of electricity-bill cash flow alone. Payback is refreshed once per completed 15-minute bucket and uses robust completed-day averages: the recent 7-day signal, the rolling 30-day signal and a small Planner-horizon contribution. Early projections remain preliminary until enough complete days have been measured. Insights also reports direct PV self-consumption savings for the selected period.
 
 ## Qilowatt integration
 

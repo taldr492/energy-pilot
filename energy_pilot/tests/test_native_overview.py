@@ -34,7 +34,7 @@ class NativeOverviewTests(unittest.TestCase):
         ):
             result = main.get_overview()
 
-        self.assertEqual(result["api_version"], 4)
+        self.assertEqual(result["api_version"], 5)
         self.assertEqual(result["site"]["name"], "Kuldkinga")
         self.assertEqual(result["price"]["history_slots"], [])
         self.assertIn("energy_value", result)
@@ -132,6 +132,38 @@ class NativeOverviewTests(unittest.TestCase):
         self.assertEqual(value["planning_horizon"]["avoided_import_savings_cents"], 1920.0)
         self.assertGreater(value["investment"]["annualized_owner_value_eur"], 0.0)
         self.assertIsNotNone(value["investment"]["projected_payback_months"])
+
+
+    def test_payback_is_stable_inside_the_same_fifteen_minute_bucket(self):
+        cfg = main.EnergyPilotConfig(
+            revision=7,
+            planning={"horizon_hours": 24},
+            battery_policy={"system_cost_eur": 6000},
+            economics={"pv_system_cost_eur": 18000},
+        )
+        main.PAYBACK_CACHE.update({"bucket": None, "signature": None, "result": None})
+        with patch.object(main, "completed_owner_daily_samples", return_value=([500.0] * 7, 168.0)):
+            first = main.stable_payback_projection(
+                cfg, main.datetime.fromisoformat("2026-08-06T12:02:00+00:00"), 200.0
+            )
+            same_bucket = main.stable_payback_projection(
+                cfg, main.datetime.fromisoformat("2026-08-06T12:14:00+00:00"), 1200.0
+            )
+            next_bucket = main.stable_payback_projection(
+                cfg, main.datetime.fromisoformat("2026-08-06T12:16:00+00:00"), 1200.0
+            )
+
+        self.assertEqual(first["annualized_owner_value_eur"], same_bucket["annualized_owner_value_eur"])
+        self.assertNotEqual(first["annualized_owner_value_eur"], next_bucket["annualized_owner_value_eur"])
+        self.assertEqual(first["projection_update_interval_minutes"], 15)
+
+    def test_legacy_slot_derives_direct_pv_self_consumption_savings(self):
+        slot = {
+            "solar_self_consumed_kwh": 2.0,
+            "load_kwh": 5.0,
+            "baseline_grid_cost_cents": 100.0,
+        }
+        self.assertEqual(main.insight_metric_value(slot, "solar_self_consumption_savings_cents"), 40.0)
 
     def test_version_15_config_migrates_pv_economics(self):
         raw = {"version": 15, "site": {}, "planning": {}, "grid_policy": {}, "battery_policy": {}}
