@@ -39,6 +39,38 @@ class NativeOverviewTests(unittest.TestCase):
         self.assertEqual(result["price"]["history_slots"], [])
         self.assertIn("energy_value", result)
 
+    def test_measurement_history_keeps_yesterday_slots_inside_rolling_window(self):
+        cfg = main.EnergyPilotConfig(site={"timezone": "UTC"})
+        observed = main.datetime.fromisoformat("2026-08-07T00:15:00+00:00")
+
+        def slot(start: str, pv_kw: float) -> dict:
+            return {
+                "start": start,
+                "end": (main.datetime.fromisoformat(start) + main.timedelta(minutes=15)).isoformat(),
+                "metrics": {
+                    "pv_kw": {"weighted_sum": pv_kw * 900, "weight_seconds": 900},
+                    "load_kw": {"weighted_sum": 1.0 * 900, "weight_seconds": 900},
+                },
+                "sources": {"pv_kw": "energy_pilot_storage", "load_kw": "energy_pilot_storage"},
+                "sample_count": 1,
+            }
+
+        data = {
+            "slots": {
+                "visible-yesterday": slot("2026-08-06T23:45:00+00:00", 2.0),
+                "inside-24h": slot("2026-08-06T01:00:00+00:00", 1.0),
+                "too-old": slot("2026-08-05T23:45:00+00:00", 3.0),
+                "future": slot("2026-08-07T00:30:00+00:00", 4.0),
+            }
+        }
+
+        result = main.public_measurement_history(cfg, data, observed)
+
+        self.assertEqual(
+            [item["start"] for item in result],
+            ["2026-08-06T01:00:00+00:00", "2026-08-06T23:45:00+00:00"],
+        )
+
     def test_energy_value_contains_avoided_grid_value_and_investment(self):
         cfg = main.EnergyPilotConfig(
             planning={"horizon_hours": 24},

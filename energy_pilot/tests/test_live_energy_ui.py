@@ -59,11 +59,11 @@ class LiveEnergyUiTests(unittest.TestCase):
     def test_frontend_is_served_from_separate_static_assets(self):
         self.assertNotIn("<style>", self.html)
         self.assertNotIn("<script>", self.html)
-        self.assertIn('href="static/styles.css?v=0.3.9-value-labels"', self.html)
-        self.assertIn('src="static/app.js?v=0.3.9-value-labels"', self.html)
+        self.assertIn('href="static/styles.css?v=0.3.10-flow-history"', self.html)
+        self.assertIn('src="static/app.js?v=0.3.10-flow-history"', self.html)
 
     def test_custom_energy_icons_and_favicon_are_used(self):
-        self.assertIn('href="static/house.svg?v=0.3.9"', self.html)
+        self.assertIn('href="static/house.svg?v=0.3.10"', self.html)
 
 
     def test_pv_investment_setting_is_exposed_and_persisted(self):

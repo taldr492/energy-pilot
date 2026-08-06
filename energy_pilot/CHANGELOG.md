@@ -1,3 +1,9 @@
+## 0.3.10
+
+- Changed native Overview measurement history from a calendar-day slice to a rolling 24-hour window, so the six-hour past flow chart remains continuous across midnight.
+- Recorder backfill now requests the same rolling window, allowing yesterday's visible slots to be recovered after an add-on restart.
+- Synchronized add-on version metadata and frontend cache-busting identifiers.
+
 ## 0.3.9
 
 - Replaced the signed Energy bill result with user-facing `Profit` or `Amount payable` labels and an unsigned amount.

@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-VERSION = "0.3.9"
+VERSION = "0.3.10"
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 CONFIG_DIR = Path("/config")
@@ -482,16 +482,16 @@ def recorder_history(cfg: EnergyPilotConfig, start: datetime, end: datetime) -> 
 
 
 def backfill_measurement_history(cfg: EnergyPilotConfig, data: dict, observed: datetime) -> bool:
-    """Refresh today's elapsed slots from Recorder at most once every 15 minutes."""
+    """Refresh the rolling flow-history window from Recorder at most once every 15 minutes."""
     monotonic_now = time.monotonic()
     previous_backfill = float(HISTORY_CACHE.get("last_backfill_monotonic") or 0.0)
     if previous_backfill and monotonic_now - previous_backfill < 900:
         return False
     HISTORY_CACHE["last_backfill_monotonic"] = monotonic_now
-    local_zone = ZoneInfo(cfg.site.timezone)
-    local_now = observed.astimezone(local_zone)
-    local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-    start = local_start.astimezone(timezone.utc)
+    # Overview shows six hours on the past side. Fetch a full rolling day so
+    # the chart remains continuous across local midnight and has recovery
+    # margin after an add-on restart or a short Recorder outage.
+    start = observed - timedelta(hours=24)
     recorder, error = recorder_history(cfg, start, observed)
     data["recorder"] = {
         "last_attempt_at": observed.isoformat(),
@@ -545,15 +545,14 @@ def record_live_measurement(data: dict, snapshot: dict) -> bool:
 
 
 def public_measurement_history(cfg: EnergyPilotConfig, data: dict, observed: datetime) -> list[dict]:
-    local_zone = ZoneInfo(cfg.site.timezone)
-    local_now = observed.astimezone(local_zone)
-    local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-    start = local_start.astimezone(timezone.utc)
-    end = (local_start + timedelta(days=1)).astimezone(timezone.utc)
+    # Do not reset Overview history at the calendar-day boundary. The native
+    # chart renders a rolling past window, so slots from yesterday must remain
+    # available whenever they still fall inside that visible range.
+    start = observed - timedelta(hours=24)
     result = []
     for slot in data.get("slots", {}).values():
         stamp = parse_time(slot.get("start"))
-        if not stamp or stamp < start or stamp >= end or stamp > observed or not slot.get("metrics"):
+        if not stamp or stamp < start or stamp > observed or not slot.get("metrics"):
             continue
         pv_kw = history_metric_value(slot, "pv_kw")
         load_kw = history_metric_value(slot, "load_kw")
