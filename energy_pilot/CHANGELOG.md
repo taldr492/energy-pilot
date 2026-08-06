@@ -1,3 +1,9 @@
+## 0.3.3
+
+- Fixed the native Planner manual-command preview returning HTTP 500 because selected slots were referenced outside their payload scope.
+- Added shared validation for preview and save requests so both endpoints accept the same actions, timestamps, power and target SOC values.
+- Added explicit save errors and regression coverage for preview and override persistence.
+
 ## 0.3.2
 
 - Added the configured site name and an explicit API version to `/api/overview` for the native iOS Overview.

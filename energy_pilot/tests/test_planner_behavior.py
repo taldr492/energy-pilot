@@ -248,3 +248,79 @@ class PlannerBehaviorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class PlannerManualOverrideEndpointTests(unittest.TestCase):
+    def setUp(self):
+        self.start = datetime.now(timezone.utc).replace(second=0, microsecond=0) + timedelta(minutes=15)
+
+    def test_preview_uses_payload_slots_without_server_error(self):
+        cfg = main.EnergyPilotConfig()
+        stamp = self.start.isoformat()
+        originals = (
+            main.load_config,
+            main.load_planner_overrides,
+            main.state_snapshot,
+            main.price_snapshot,
+            main.apply_slot_plan,
+        )
+        try:
+            main.load_config = lambda: cfg
+            main.load_planner_overrides = lambda: {}
+            main.state_snapshot = lambda _cfg: {}
+            main.price_snapshot = lambda _cfg: {}
+
+            def apply(_cfg, _snapshot, price, overrides=None):
+                manual = overrides is not None
+                price["slots"] = [{
+                    "start": stamp,
+                    "slot_cash_cost_cents": -12.0 if manual else -10.0,
+                    "slot_wear_cost_cents": 1.0,
+                }]
+                price["plan"] = {
+                    "horizon_financial": {
+                        "net_cents": 11.0 if manual else 9.0,
+                        "export_revenue_cents": 12.0 if manual else 10.0,
+                        "import_cost_cents": 0.0,
+                        "wear_cost_cents": 1.0,
+                    },
+                    "final_soc_percent": 50.0,
+                }
+
+            main.apply_slot_plan = apply
+            result = main.preview_planner_overrides({
+                "slots": [stamp],
+                "action": "SELL",
+                "power_kw": 5.0,
+                "target_soc_percent": 40.0,
+            })
+        finally:
+            (
+                main.load_config,
+                main.load_planner_overrides,
+                main.state_snapshot,
+                main.price_snapshot,
+                main.apply_slot_plan,
+            ) = originals
+
+        self.assertEqual(result["selected_slot_impact"]["candidate"]["slot_count"], 1)
+        self.assertEqual(result["assessment"], "better")
+
+    def test_put_override_persists_command(self):
+        original_file = main.OVERRIDES_FILE
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                main.OVERRIDES_FILE = Path(directory) / "overrides.json"
+                result = main.put_planner_overrides({
+                    "slots": [self.start.isoformat()],
+                    "action": "NORMAL",
+                    "power_kw": None,
+                    "target_soc_percent": None,
+                })
+                stored = main.load_planner_overrides()
+        finally:
+            main.OVERRIDES_FILE = original_file
+
+        self.assertEqual(result["status"], "saved")
+        self.assertEqual(result["saved_count"], 1)
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(next(iter(stored.values()))["action"], "NORMAL")

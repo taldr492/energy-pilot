@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-VERSION = "0.3.2"
+VERSION = "0.3.3"
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 CONFIG_DIR = Path("/config")
@@ -3891,45 +3891,80 @@ def reset_config():
 def get_planner_overrides():
     return {"overrides": load_planner_overrides()}
 
-@app.put("/api/planner/overrides")
-def put_planner_overrides(payload: dict):
-    current = load_planner_overrides()
-    for stamp in payload.get("remove", []):
-        parsed = parse_time(stamp)
-        if parsed:
-            current.pop(parsed.isoformat(), None)
-    action = payload.get("action")
-    if action:
-        for stamp in payload.get("slots", []):
-            parsed = parse_time(stamp)
-            if parsed:
-                current[parsed.isoformat()] = {
-                    "action": action,
-                    "power_kw": payload.get("power_kw"),
-                    "target_soc_percent": payload.get("target_soc_percent"),
-                }
-    save_planner_overrides(current)
-    return {"status": "saved", "overrides": load_planner_overrides()}
+PLANNER_OVERRIDE_ACTIONS = {"NORMAL", "BUY", "SELL", "SAVE BATTERY", "LIMIT EXPORT", "PV SELL"}
 
-def planner_preview_overrides(payload: dict) -> dict:
-    preview = deepcopy(load_planner_overrides())
-    allowed_actions = {"NORMAL", "BUY", "SELL", "SAVE BATTERY", "LIMIT EXPORT", "PV SELL"}
-    action = str(payload.get("action") or "").upper()
-    if action not in allowed_actions:
+
+def validated_override_command(payload: dict, *, require_action: bool = True) -> tuple[list[datetime], Optional[str], Optional[float], Optional[float]]:
+    action_value = payload.get("action")
+    action = str(action_value or "").upper() if action_value is not None else None
+    if require_action and action not in PLANNER_OVERRIDE_ACTIONS:
         raise HTTPException(422, "Choose a valid manual action.")
-    slots = payload.get("slots")
-    if not isinstance(slots, list) or not slots:
+    if action is not None and action not in PLANNER_OVERRIDE_ACTIONS:
+        raise HTTPException(422, "Choose a valid manual action.")
+
+    raw_slots = payload.get("slots", [])
+    if not isinstance(raw_slots, list) or (require_action and not raw_slots):
         raise HTTPException(422, "Select at least one plan slot.")
-    power = payload.get("power_kw")
-    target = payload.get("target_soc_percent")
-    if power is not None and (not isinstance(power, (int, float)) or power < 0):
-        raise HTTPException(422, "Power must be zero or greater.")
-    if target is not None and (not isinstance(target, (int, float)) or target < 0 or target > 100):
-        raise HTTPException(422, "Target SOC must be between 0 and 100%.")
-    for stamp in slots:
+    slots = []
+    for stamp in raw_slots:
         parsed = parse_time(stamp)
         if not parsed:
             raise HTTPException(422, f"Invalid slot timestamp: {stamp}")
+        slots.append(parsed)
+
+    power = payload.get("power_kw")
+    target = payload.get("target_soc_percent")
+    if power is not None and (not isinstance(power, (int, float)) or isinstance(power, bool) or power < 0):
+        raise HTTPException(422, "Power must be zero or greater.")
+    if target is not None and (not isinstance(target, (int, float)) or isinstance(target, bool) or target < 0 or target > 100):
+        raise HTTPException(422, "Target SOC must be between 0 and 100%.")
+    return slots, action, float(power) if power is not None else None, float(target) if target is not None else None
+
+
+@app.put("/api/planner/overrides")
+def put_planner_overrides(payload: dict):
+    current = load_planner_overrides()
+
+    raw_remove = payload.get("remove", [])
+    if not isinstance(raw_remove, list):
+        raise HTTPException(422, "Remove must be a list of slot timestamps.")
+    for stamp in raw_remove:
+        parsed = parse_time(stamp)
+        if not parsed:
+            raise HTTPException(422, f"Invalid slot timestamp: {stamp}")
+        current.pop(parsed.isoformat(), None)
+
+    action_value = payload.get("action")
+    saved_count = 0
+    if action_value is not None:
+        slots, action, power, target = validated_override_command(payload)
+        for parsed in slots:
+            current[parsed.isoformat()] = {
+                "action": action,
+                "power_kw": power,
+                "target_soc_percent": target,
+            }
+            saved_count += 1
+    elif not raw_remove:
+        raise HTTPException(422, "Choose a manual action or slots to remove.")
+
+    try:
+        save_planner_overrides(current)
+    except (OSError, ValueError, TypeError) as exc:
+        raise HTTPException(500, f"Could not save manual plan: {exc}") from exc
+    stored = load_planner_overrides()
+    return {
+        "status": "saved",
+        "saved_count": saved_count,
+        "removed_count": len(raw_remove),
+        "overrides": stored,
+    }
+
+
+def planner_preview_overrides(payload: dict) -> dict:
+    preview = deepcopy(load_planner_overrides())
+    slots, action, power, target = validated_override_command(payload)
+    for parsed in slots:
         preview[parsed.isoformat()] = {
             "action": action,
             "power_kw": power,
@@ -3959,7 +3994,8 @@ def preview_planner_overrides(payload: dict):
     if abs(delta_cents) < 0.005:
         warnings.append("This manual command has no material effect on the full planning-horizon result.")
     planner_issue = delta_cents >= issue_threshold_cents
-    selected_keys = {parse_time(stamp).isoformat() for stamp in slots if parse_time(stamp)}
+    selected_slots, _, _, _ = validated_override_command(payload)
+    selected_keys = {stamp.isoformat() for stamp in selected_slots}
     def selected_metrics(plan_price: dict) -> dict:
         selected = [slot for slot in plan_price.get("slots") or [] if parse_time(slot.get("start")) and parse_time(slot.get("start")).isoformat() in selected_keys]
         export_revenue = sum(max(0.0, -float(slot.get("slot_cash_cost_cents") or 0.0)) for slot in selected)
