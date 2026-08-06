@@ -1,3 +1,9 @@
+## 0.3.2
+
+- Added the configured site name and an explicit API version to `/api/overview` for the native iOS Overview.
+- Prepared the existing live state, measured history and Planner forecast payload for the animated Past / Now / Future flow timeline.
+- Kept the desktop Overview unchanged and bumped frontend cache-busting metadata for the synchronized release.
+
 ## 0.3.1
 
 - Expanded the native Planner API with current prices, forecast quality, projected gain, NORMAL comparison and remaining-today financials.
