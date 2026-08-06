@@ -1,3 +1,10 @@
+## 0.3.4
+
+- Canonicalized manual Planner slot timestamps to UTC so commands saved by iOS match plan slots returned in the site timezone.
+- Verify persisted override keys after every save and return the actual persisted count.
+- Reworded NORMAL recommendations so full-horizon gains are attributed to other optimized slots instead of comparing NORMAL with itself.
+- Removed the duplicated no-material-effect preview warning.
+
 ## 0.3.3
 
 - Fixed the native Planner manual-command preview returning HTTP 500 because selected slots were referenced outside their payload scope.

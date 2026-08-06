@@ -305,6 +305,52 @@ class PlannerManualOverrideEndpointTests(unittest.TestCase):
         self.assertEqual(result["selected_slot_impact"]["candidate"]["slot_count"], 1)
         self.assertEqual(result["assessment"], "better")
 
+
+    def test_saved_utc_override_matches_local_timezone_plan_slot(self):
+        original_file = main.OVERRIDES_FILE
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                main.OVERRIDES_FILE = Path(directory) / "overrides.json"
+                utc_stamp = self.start.astimezone(timezone.utc)
+                local_stamp = utc_stamp.astimezone(timezone(timedelta(hours=3)))
+                result = main.put_planner_overrides({
+                    "slots": [utc_stamp.isoformat().replace("+00:00", "Z")],
+                    "action": "SELL",
+                    "power_kw": 5.0,
+                    "target_soc_percent": 40.0,
+                })
+                overrides = main.load_planner_overrides()
+                cfg = main.EnergyPilotConfig()
+                slots = [{
+                    "start": local_stamp.isoformat(),
+                    "action": "NORMAL",
+                    "pv_forecast_kw": 0.0,
+                    "load_forecast_kw": 0.0,
+                    "import_cents_kwh": 10.0,
+                    "export_cents_kwh": 10.0,
+                    "charge_kw": 0.0,
+                    "discharge_kw": 0.0,
+                }]
+                main.apply_manual_overrides(
+                    cfg, slots, 40.0, 30.0, 6.0, 40.0, 0.25, 0.95, 1.0, overrides,
+                )
+        finally:
+            main.OVERRIDES_FILE = original_file
+
+        self.assertEqual(result["saved_count"], 1)
+        self.assertTrue(slots[0]["manual_override"])
+        self.assertEqual(slots[0]["action"], "SELL")
+
+    def test_normal_reason_does_not_compare_current_normal_slot_to_normal(self):
+        reason = main.planner_recommendation_reason({
+            "action": "NORMAL",
+            "action_reason": "Solar surplus supplies the battery.",
+            "soc_before_percent": 99.0,
+            "soc_after_percent": 99.0,
+        }, 99.0, 32.0)
+        self.assertIn("This slot stays in NORMAL", reason)
+        self.assertIn("other slots", reason)
+        self.assertNotIn("versus NORMAL", reason)
     def test_put_override_persists_command(self):
         original_file = main.OVERRIDES_FILE
         try:

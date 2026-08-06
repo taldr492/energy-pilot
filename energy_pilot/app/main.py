@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-VERSION = "0.3.3"
+VERSION = "0.3.4"
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 CONFIG_DIR = Path("/config")
@@ -192,7 +192,12 @@ def load_planner_overrides() -> dict:
     try:
         raw = json.loads(OVERRIDES_FILE.read_text(encoding="utf-8"))
         if isinstance(raw, dict):
-            return raw
+            normalized = {}
+            for stamp, value in raw.items():
+                key = planner_slot_key(stamp)
+                if key and isinstance(value, dict):
+                    normalized[key] = value
+            return normalized
     except (OSError, ValueError):
         pass
     return {}
@@ -209,7 +214,10 @@ def save_planner_overrides(overrides: dict) -> None:
         action = str(value.get("action") or "").upper()
         if action not in allowed_actions:
             continue
-        cleaned[parsed.isoformat()] = {
+        key = planner_slot_key(parsed)
+        if not key:
+            continue
+        cleaned[key] = {
             "action": action,
             "power_kw": max(0.0, float(value["power_kw"])) if value.get("power_kw") not in (None, "") else None,
             "target_soc_percent": max(0.0, min(100.0, float(value["target_soc_percent"]))) if value.get("target_soc_percent") not in (None, "") else None,
@@ -1641,6 +1649,14 @@ def parse_time(value: Optional[str]) -> Optional[datetime]:
     except ValueError:
         return None
 
+
+def planner_slot_key(value) -> Optional[str]:
+    """Return one timezone-independent key for a 15-minute Planner slot."""
+    parsed = value if isinstance(value, datetime) else parse_time(value)
+    if parsed is None:
+        return None
+    return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+
 def age_seconds(item: dict, observed: datetime) -> Optional[float]:
     # last_updated changes only when a state/attribute changes. last_reported tracks
     # fresh reports even when the numeric value stays constant (for example PV=0 at night).
@@ -2976,7 +2992,7 @@ def apply_manual_overrides(
     policy = cfg.battery_policy
     for slot in slots:
         stamp = parse_time(slot.get("start"))
-        key = stamp.isoformat() if stamp else ""
+        key = planner_slot_key(stamp) or ""
         override = overrides.get(key)
         pv_kw = float(slot.get("pv_forecast_kw") or 0.0)
         load_kw = float(slot.get("load_forecast_kw") or 0.0)
@@ -3384,6 +3400,30 @@ def apply_slot_plan(
     }
 
 
+def planner_recommendation_reason(planned: dict, fallback_soc: Optional[float], savings_cents: float) -> str:
+    action = str(planned.get("action") or "NORMAL").upper()
+    core = str(planned.get("action_reason") or "Globally optimized horizon plan.").strip()
+    if core and not core.endswith((".", "!", "?")):
+        core += "."
+    before = planned.get("soc_before_percent", fallback_soc)
+    after = planned.get("soc_after_percent", fallback_soc)
+    soc_text = ""
+    if before is not None and after is not None:
+        soc_text = f" Projected SOC {float(before):.0f}% → {float(after):.0f}%."
+    gain_euros = savings_cents / 100.0
+    if action == "NORMAL":
+        if abs(savings_cents) > 0.005:
+            horizon_text = (
+                f" This slot stays in NORMAL; the projected {gain_euros:.2f} € full-horizon gain "
+                "comes from optimized actions in other slots."
+            )
+        else:
+            horizon_text = " This slot stays in NORMAL because no exceptional action adds material value here."
+    else:
+        horizon_text = f" Projected full-horizon gain versus an all-NORMAL plan: {gain_euros:.2f} €."
+    return f"{core}{soc_text}{horizon_text}".strip()
+
+
 def planner_snapshot(
     cfg: EnergyPilotConfig,
     snapshot: dict,
@@ -3425,8 +3465,7 @@ def planner_snapshot(
         planned = price["slots"][0]
         action = planned.get("action", "NORMAL")
         savings = float((price or {}).get("plan", {}).get("projected_savings_cents") or 0.0)
-        slot_label = "current slot" if planned.get("is_current") else "next slot"
-        reason = f"Planner v3 {slot_label}: {planned.get('action_reason', 'globally optimized horizon plan')} Projected SOC {planned.get('soc_before_percent', soc):.0f}% → {planned.get('soc_after_percent', soc):.0f}%. Horizon value improvement versus NORMAL: {savings / 100:.2f} €."
+        reason = planner_recommendation_reason(planned, soc, savings)
         tone = {"SELL": "accent", "PV SELL": "accent", "BUY": "positive", "SAVE BATTERY": "positive", "LIMIT EXPORT": "warning", "NORMAL": "neutral"}[action]
         base_confidence = 94 if price["plan"].get("quality") == "forecast" else 84
     elif price_available:
@@ -3932,14 +3971,14 @@ def put_planner_overrides(payload: dict):
         parsed = parse_time(stamp)
         if not parsed:
             raise HTTPException(422, f"Invalid slot timestamp: {stamp}")
-        current.pop(parsed.isoformat(), None)
+        current.pop(planner_slot_key(parsed), None)
 
     action_value = payload.get("action")
     saved_count = 0
     if action_value is not None:
         slots, action, power, target = validated_override_command(payload)
         for parsed in slots:
-            current[parsed.isoformat()] = {
+            current[planner_slot_key(parsed)] = {
                 "action": action,
                 "power_kw": power,
                 "target_soc_percent": target,
@@ -3953,9 +3992,13 @@ def put_planner_overrides(payload: dict):
     except (OSError, ValueError, TypeError) as exc:
         raise HTTPException(500, f"Could not save manual plan: {exc}") from exc
     stored = load_planner_overrides()
+    requested_keys = {planner_slot_key(stamp) for stamp in payload.get("slots", []) if planner_slot_key(stamp)}
+    persisted_count = sum(key in stored for key in requested_keys)
+    if action_value is not None and persisted_count != len(requested_keys):
+        raise HTTPException(500, "Manual plan was written but could not be verified after saving.")
     return {
         "status": "saved",
-        "saved_count": saved_count,
+        "saved_count": persisted_count,
         "removed_count": len(raw_remove),
         "overrides": stored,
     }
@@ -3965,7 +4008,7 @@ def planner_preview_overrides(payload: dict) -> dict:
     preview = deepcopy(load_planner_overrides())
     slots, action, power, target = validated_override_command(payload)
     for parsed in slots:
-        preview[parsed.isoformat()] = {
+        preview[planner_slot_key(parsed)] = {
             "action": action,
             "power_kw": power,
             "target_soc_percent": target,
@@ -3995,9 +4038,9 @@ def preview_planner_overrides(payload: dict):
         warnings.append("This manual command has no material effect on the full planning-horizon result.")
     planner_issue = delta_cents >= issue_threshold_cents
     selected_slots, _, _, _ = validated_override_command(payload)
-    selected_keys = {stamp.isoformat() for stamp in selected_slots}
+    selected_keys = {planner_slot_key(stamp) for stamp in selected_slots}
     def selected_metrics(plan_price: dict) -> dict:
-        selected = [slot for slot in plan_price.get("slots") or [] if parse_time(slot.get("start")) and parse_time(slot.get("start")).isoformat() in selected_keys]
+        selected = [slot for slot in plan_price.get("slots") or [] if planner_slot_key(slot.get("start")) in selected_keys]
         export_revenue = sum(max(0.0, -float(slot.get("slot_cash_cost_cents") or 0.0)) for slot in selected)
         import_cost = sum(max(0.0, float(slot.get("slot_cash_cost_cents") or 0.0)) for slot in selected)
         wear = sum(float(slot.get("slot_wear_cost_cents") or 0.0) for slot in selected)

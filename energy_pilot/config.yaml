@@ -1,5 +1,5 @@
 name: "Energy Pilot"
-version: "0.3.3"
+version: "0.3.4"
 slug: "energy_pilot"
 description: "Local-first energy management runtime."
 startup: application

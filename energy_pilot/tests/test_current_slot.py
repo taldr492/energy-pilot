@@ -62,12 +62,15 @@ class CurrentSlotTests(unittest.TestCase):
         self.assertFalse(result["slots"][1]["is_current"])
         self.assertEqual(result["slot_count"], 2)
 
-    def test_overview_copy_distinguishes_current_slot(self):
-        source = Path(main.__file__).read_text(encoding="utf-8")
-        self.assertIn(
-            '"current slot" if planned.get("is_current") else "next slot"',
-            source,
-        )
+    def test_overview_copy_has_no_redundant_planner_v3_prefix(self):
+        reason = main.planner_recommendation_reason({
+            "action": "SELL",
+            "action_reason": "Sell before the next solar window.",
+            "soc_before_percent": 60.0,
+            "soc_after_percent": 52.0,
+        }, 60.0, 30.0)
+        self.assertNotIn("Planner v3", reason)
+        self.assertIn("Projected full-horizon gain", reason)
 
 
 if __name__ == "__main__":
