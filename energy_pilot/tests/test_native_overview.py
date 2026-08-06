@@ -165,6 +165,87 @@ class NativeOverviewTests(unittest.TestCase):
         }
         self.assertEqual(main.insight_metric_value(slot, "solar_self_consumption_savings_cents"), 40.0)
 
+
+    def test_owner_backfill_uses_original_tracking_start_and_recorder_prices(self):
+        cfg = main.EnergyPilotConfig(
+            battery_policy={"degradation_cost_cents_kwh": 0.2},
+            price_connector={"entity": "sensor.nordpool"},
+        )
+        observed = main.datetime.fromisoformat("2026-08-06T12:15:00+00:00")
+        start = "2026-08-03T00:00:00+00:00"
+        bucket = "2026-08-03T10:00:00+00:00"
+        data = {
+            "tracking_since": start,
+            "owner_value_version": 2,
+            "owner_tracking_since": "2026-08-06T12:00:00+00:00",
+            "last_observed_at": "2026-08-06T12:00:00+00:00",
+            "slots": {},
+        }
+        recorder = {
+            bucket: {
+                "load_kw": {"weighted_sum": 4.0 * 900, "weight_seconds": 900},
+                "pv_kw": {"weighted_sum": 2.0 * 900, "weight_seconds": 900},
+                "grid_import_kw": {"weighted_sum": 1.0 * 900, "weight_seconds": 900},
+                "grid_export_kw": {"weighted_sum": 0.0, "weight_seconds": 900},
+                "battery_kw": {"weighted_sum": 1.0 * 900, "weight_seconds": 900},
+                "import_price_cents_kwh": {"weighted_sum": 20.0 * 900, "weight_seconds": 900},
+                "export_price_cents_kwh": {"weighted_sum": 10.0 * 900, "weight_seconds": 900},
+            }
+        }
+        snapshot = {"battery": {}}
+        with (
+            patch.object(main, "recorder_history", return_value=(recorder, None)),
+            patch.object(main, "atomic_write"),
+        ):
+            changed = main.backfill_owner_ledger(cfg, data, snapshot, observed)
+
+        self.assertTrue(changed)
+        self.assertEqual(data["owner_value_version"], 3)
+        self.assertEqual(data["owner_tracking_since"], start)
+        slot = data["slots"][bucket]
+        self.assertAlmostEqual(slot["load_kwh"], 1.0)
+        self.assertAlmostEqual(slot["grid_to_load_kwh"], 0.25)
+        self.assertAlmostEqual(slot["self_supplied_kwh"], 0.75)
+        self.assertAlmostEqual(slot["avoided_import_savings_cents"], 15.0)
+        self.assertAlmostEqual(slot["owner_value_after_wear_cents"], 14.95)
+        self.assertEqual(data["owner_backfill"]["exact_price_slot_count"], 1)
+
+    def test_month_benefits_use_backfilled_insights_totals(self):
+        cfg = main.EnergyPilotConfig(site={"timezone": "Europe/Tallinn"})
+        benefits = {"owner_self_supplied_kwh": 0.22, "period": "2026-08"}
+        summary = {
+            "period_start": "2026-07-31T21:00:00+00:00",
+            "tracking_since": "2026-08-03T13:14:00+00:00",
+            "owner_tracking_since": "2026-08-03T13:14:00+00:00",
+            "totals": {
+                "load_kwh": 30.0,
+                "grid_import_kwh": 8.0,
+                "grid_export_kwh": 12.0,
+                "grid_to_load_kwh": 6.0,
+                "grid_to_battery_kwh": 2.0,
+                "self_supplied_kwh": 24.0,
+                "battery_throughput_kwh": 5.0,
+                "import_cost_cents": 160.0,
+                "export_revenue_cents": 240.0,
+                "baseline_grid_cost_cents": 600.0,
+                "avoided_import_savings_cents": 480.0,
+                "grid_charging_cost_cents": 40.0,
+                "battery_wear_cents": 20.0,
+                "owner_value_before_wear_cents": 680.0,
+                "owner_value_after_wear_cents": 660.0,
+                "negative_price_protection_minutes": 15.0,
+                "bill_result_cents": 80.0,
+            },
+            "data_quality": {"owner_backfill": {"slot_count": 100}},
+        }
+
+        merged = main.merge_benefits_with_insights(cfg, benefits, summary)
+
+        self.assertEqual(merged["owner_self_supplied_kwh"], 24.0)
+        self.assertEqual(merged["owner_avoided_import_savings_cents"], 480.0)
+        self.assertEqual(merged["owner_tracking_since"], summary["tracking_since"])
+        self.assertEqual(merged["owner_backfill"]["slot_count"], 100)
+
     def test_version_15_config_migrates_pv_economics(self):
         raw = {"version": 15, "site": {}, "planning": {}, "grid_policy": {}, "battery_policy": {}}
         migrated = main.migrate_legacy(raw)

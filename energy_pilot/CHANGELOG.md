@@ -1,3 +1,11 @@
+## 0.3.8
+
+- Backfilled PV + battery self-supplied energy and avoided grid purchases from Energy Pilot's original tracking start instead of the owner-value feature upgrade time.
+- Added Home Assistant Recorder price history to reconstruct each historical 15-minute slot with its effective import/export price.
+- Rebuilt grid-to-load, grid-to-battery, avoided import savings, owner value and wear fields for legacy Insights slots.
+- Switched Overview Energy value month-to-date figures to the durable Insights ledger so the restored history appears immediately.
+- Added backfill source and coverage metadata to the Insights API.
+
 ## 0.3.7
 
 - Stabilized system payback so it updates once per completed 15-minute bucket instead of every live Overview refresh.
