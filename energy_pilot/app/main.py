@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-VERSION = "0.3.8"
+VERSION = "0.3.9"
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 CONFIG_DIR = Path("/config")

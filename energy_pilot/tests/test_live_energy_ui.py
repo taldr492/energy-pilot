@@ -59,11 +59,11 @@ class LiveEnergyUiTests(unittest.TestCase):
     def test_frontend_is_served_from_separate_static_assets(self):
         self.assertNotIn("<style>", self.html)
         self.assertNotIn("<script>", self.html)
-        self.assertIn('href="static/styles.css?v=0.3.8-owner-backfill"', self.html)
-        self.assertIn('src="static/app.js?v=0.3.8-owner-backfill"', self.html)
+        self.assertIn('href="static/styles.css?v=0.3.9-value-labels"', self.html)
+        self.assertIn('src="static/app.js?v=0.3.9-value-labels"', self.html)
 
     def test_custom_energy_icons_and_favicon_are_used(self):
-        self.assertIn('href="static/house.svg?v=0.3.8"', self.html)
+        self.assertIn('href="static/house.svg?v=0.3.9"', self.html)
 
 
     def test_pv_investment_setting_is_exposed_and_persisted(self):
@@ -77,6 +77,12 @@ class LiveEnergyUiTests(unittest.TestCase):
         self.assertIn("owner_value_after_wear_cents", self.js)
         self.assertIn("PV self-consumption savings", self.js)
         self.assertIn("solar_self_consumption_savings_cents", self.js)
+
+    def test_energy_value_uses_profit_or_payable_without_redundant_plus(self):
+        self.assertIn("profit?'Profit':payable?'Amount payable'", self.js)
+        self.assertIn("invoiceMagnitudeFromCashResultCents", self.js)
+        self.assertIn("benefitItem('Avoided grid purchases',moneyFromCents", self.js)
+        self.assertIn("insightMetric('PV self-consumption savings',moneyFromCents", self.js)
 
     def test_price_breakdown_popovers_are_available(self):
         self.assertIn("price-breakdown-trigger", self.js)

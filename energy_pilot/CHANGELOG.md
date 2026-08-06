@@ -1,3 +1,9 @@
+## 0.3.9
+
+- Replaced the signed Energy bill result with user-facing `Profit` or `Amount payable` labels and an unsigned amount.
+- Removed the redundant leading plus from avoided-grid and PV self-consumption savings values.
+- Bumped frontend cache-busting metadata so the updated Energy value wording loads immediately.
+
 ## 0.3.8
 
 - Backfilled PV + battery self-supplied energy and avoided grid purchases from Energy Pilot's original tracking start instead of the owner-value feature upgrade time.
