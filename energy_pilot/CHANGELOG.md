@@ -1,3 +1,11 @@
+## 0.3.6
+
+- Corrected Energy value payback to include electricity purchases avoided when PV or battery supplies the home.
+- Added durable owner-value tracking: self-supplied energy, avoided grid cost, grid-charging cost, export revenue and battery wear.
+- Added explicit owner-value fields to measured and Planner-horizon Overview payloads.
+- Marked payback projections preliminary while owner-value history is still short.
+- Updated native and web Energy value cards with avoided grid purchases and grid-charging cost.
+
 ## 0.3.5
 
 - Added the typed Overview Energy value payload for measured month-to-date and the current Planner horizon.

@@ -26,6 +26,7 @@ class NativeOverviewTests(unittest.TestCase):
             patch.object(main, "record_insights"),
             patch.object(main, "qilowatt_snapshot", return_value={}),
             patch.object(main, "monthly_benefits", return_value={}),
+            patch.object(main, "insights_summary", return_value={}),
             patch.object(main, "update_learning"),
             patch.object(main, "planner_snapshot", return_value={}),
             patch.object(main, "overview_metrics", return_value={}),
@@ -33,12 +34,12 @@ class NativeOverviewTests(unittest.TestCase):
         ):
             result = main.get_overview()
 
-        self.assertEqual(result["api_version"], 3)
+        self.assertEqual(result["api_version"], 4)
         self.assertEqual(result["site"]["name"], "Kuldkinga")
         self.assertEqual(result["price"]["history_slots"], [])
         self.assertIn("energy_value", result)
 
-    def test_energy_value_contains_measured_horizon_and_investment(self):
+    def test_energy_value_contains_avoided_grid_value_and_investment(self):
         cfg = main.EnergyPilotConfig(
             planning={"horizon_hours": 24},
             battery_policy={"system_cost_eur": 12000},
@@ -49,13 +50,15 @@ class NativeOverviewTests(unittest.TestCase):
             "slots": [
                 {
                     "action": "LIMIT EXPORT",
+                    "load_forecast_kw": 4.0,
                     "grid_import_kw": 1.0,
                     "grid_export_kw": 2.0,
+                    "import_cents_kwh": 20.0,
                 }
             ],
             "plan": {
                 "horizon_financial": {
-                    "import_cost_cents": 10.0,
+                    "import_cost_cents": 5.0,
                     "export_revenue_cents": 40.0,
                     "wear_cost_cents": 5.0,
                 }
@@ -64,22 +67,70 @@ class NativeOverviewTests(unittest.TestCase):
         measured = {
             "period": "2026-08",
             "tracking_since": "2026-08-01T00:00:00+00:00",
+            "owner_tracking_since": "2026-08-05T00:00:00+00:00",
             "bill_result_cents": 500.0,
-            "result_after_wear_cents": 450.0,
             "export_revenue_cents": 600.0,
             "export_kwh": 40.0,
             "import_cost_cents": 100.0,
             "import_kwh": 5.0,
-            "wear_cost_cents": 50.0,
+            "owner_load_kwh": 20.0,
+            "owner_self_supplied_kwh": 15.0,
+            "owner_grid_to_battery_kwh": 2.0,
+            "owner_baseline_grid_cost_cents": 400.0,
+            "owner_avoided_import_savings_cents": 300.0,
+            "owner_grid_charging_cost_cents": 40.0,
+            "owner_wear_cost_cents": 50.0,
+            "owner_value_before_wear_cents": 860.0,
+            "owner_value_after_wear_cents": 810.0,
             "negative_price_protection_minutes": 30.0,
         }
+        owner_history = {
+            "owner_tracking_since": "2026-08-01T00:00:00+00:00",
+            "totals": {"owner_value_after_wear_cents": 900.0},
+            "data_quality": {"owner_coverage_hours": 120.0},
+        }
 
-        value = main.energy_value_payload(cfg, snapshot, price, measured)
+        value = main.energy_value_payload(cfg, snapshot, price, measured, owner_history)
 
         self.assertEqual(value["measured"]["invoice_amount_cents"], -500.0)
-        self.assertEqual(value["planning_horizon"]["bill_result_cents"], 30.0)
+        self.assertEqual(value["measured"]["avoided_import_savings_cents"], 300.0)
+        # 4 kW load for 15 min at 20 c/kWh means 20 c baseline cost.
+        self.assertEqual(value["planning_horizon"]["baseline_grid_cost_cents"], 20.0)
+        # 3 kW is self supplied for 15 min => 15 c avoided grid cost.
+        self.assertEqual(value["planning_horizon"]["avoided_import_savings_cents"], 15.0)
+        self.assertEqual(value["planning_horizon"]["owner_value_after_wear_cents"], 50.0)
         self.assertEqual(value["planning_horizon"]["price_protection_minutes"], 15.0)
         self.assertEqual(value["investment"]["total_system_cost_eur"], 30000.0)
+        self.assertTrue(value["investment"]["includes_avoided_grid_purchases"])
+        self.assertIsNotNone(value["investment"]["projected_payback_months"])
+
+    def test_payback_uses_owner_value_not_only_energy_bill_cashflow(self):
+        cfg = main.EnergyPilotConfig(
+            planning={"horizon_hours": 24},
+            battery_policy={"system_cost_eur": 6000},
+            economics={"pv_system_cost_eur": 18000},
+        )
+        snapshot = {"observed_at": "2026-08-06T12:00:00+00:00"}
+        slots = [
+            {
+                "load_forecast_kw": 4.0,
+                "grid_import_kw": 0.0,
+                "grid_export_kw": 0.0,
+                "import_cents_kwh": 20.0,
+            }
+            for _ in range(96)
+        ]
+        price = {
+            "slots": slots,
+            "plan": {"horizon_financial": {"import_cost_cents": 0.0, "export_revenue_cents": 0.0, "wear_cost_cents": 0.0}},
+        }
+        measured = {"period": "2026-08", "bill_result_cents": 0.0}
+
+        value = main.energy_value_payload(cfg, snapshot, price, measured, {})
+
+        self.assertEqual(value["planning_horizon"]["bill_result_cents"], 0.0)
+        self.assertEqual(value["planning_horizon"]["avoided_import_savings_cents"], 1920.0)
+        self.assertGreater(value["investment"]["annualized_owner_value_eur"], 0.0)
         self.assertIsNotNone(value["investment"]["projected_payback_months"])
 
     def test_version_15_config_migrates_pv_economics(self):

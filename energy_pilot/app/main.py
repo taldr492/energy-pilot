@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-VERSION = "0.3.5"
+VERSION = "0.3.6"
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 CONFIG_DIR = Path("/config")
@@ -614,6 +614,8 @@ def load_insights_ledger() -> dict:
         if isinstance(raw, dict):
             raw.setdefault("version", 1)
             raw.setdefault("tracking_since", datetime.now(timezone.utc).isoformat())
+            raw.setdefault("owner_value_version", 1)
+            raw.setdefault("owner_tracking_since", None)
             raw.setdefault("last_observed_at", None)
             raw.setdefault("slots", {})
             INSIGHTS_CACHE.update({"loaded": True, "data": raw})
@@ -621,7 +623,14 @@ def load_insights_ledger() -> dict:
     except (OSError, ValueError, TypeError):
         pass
     now = datetime.now(timezone.utc).isoformat()
-    data = {"version": 1, "tracking_since": now, "last_observed_at": None, "slots": {}}
+    data = {
+        "version": 1,
+        "tracking_since": now,
+        "owner_value_version": 2,
+        "owner_tracking_since": now,
+        "last_observed_at": None,
+        "slots": {},
+    }
     INSIGHTS_CACHE.update({"loaded": True, "data": data})
     return data
 
@@ -636,13 +645,32 @@ def insight_slot(data: dict, bucket: datetime) -> dict:
         "solar_self_consumed_kwh": 0.0,
         "grid_import_kwh": 0.0,
         "grid_export_kwh": 0.0,
+        "grid_to_load_kwh": 0.0,
+        "grid_to_battery_kwh": 0.0,
+        "self_supplied_kwh": 0.0,
         "battery_throughput_kwh": 0.0,
         "import_cost_cents": 0.0,
         "export_revenue_cents": 0.0,
+        "baseline_grid_cost_cents": 0.0,
+        "avoided_import_savings_cents": 0.0,
+        "grid_charging_cost_cents": 0.0,
+        "owner_value_before_wear_cents": 0.0,
+        "owner_value_after_wear_cents": 0.0,
         "battery_wear_cents": 0.0,
         "negative_price_protection_minutes": 0.0,
         "coverage_seconds": 0.0,
+        "owner_coverage_seconds": 0.0,
     })
+
+
+def flow_route_power(snapshot: dict, source: str, target: str) -> Optional[float]:
+    for route in snapshot.get("flow", {}).get("routes") or []:
+        if route.get("from") == source and route.get("to") == target:
+            try:
+                return max(0.0, float(route.get("power_kw") or 0.0))
+            except (TypeError, ValueError):
+                return 0.0
+    return None
 
 
 def record_insights(cfg: EnergyPilotConfig, snapshot: dict, price: dict) -> None:
@@ -650,6 +678,11 @@ def record_insights(cfg: EnergyPilotConfig, snapshot: dict, price: dict) -> None
     observed = parse_time(snapshot.get("observed_at")) or datetime.now(timezone.utc)
     with INSIGHTS_LOCK:
         data = load_insights_ledger()
+        if int(data.get("owner_value_version") or 1) < 2:
+            data["owner_value_version"] = 2
+            data["owner_tracking_since"] = observed.isoformat()
+        elif not data.get("owner_tracking_since"):
+            data["owner_tracking_since"] = observed.isoformat()
         previous = parse_time(data.get("last_observed_at"))
         if not previous:
             data["last_observed_at"] = observed.isoformat()
@@ -667,37 +700,70 @@ def record_insights(cfg: EnergyPilotConfig, snapshot: dict, price: dict) -> None
         load_kw = snapshot.get("load", {}).get("power_kw", {}).get("value")
         grid_kw = snapshot.get("grid", {}).get("power_kw", {}).get("value")
         battery_kw = snapshot.get("battery", {}).get("power_kw", {}).get("value")
-        routes = snapshot.get("flow", {}).get("routes") or []
-        solar_home_kw = next((
-            float(route.get("power_kw") or 0.0)
-            for route in routes
-            if route.get("from") == "pv" and route.get("to") == "load"
-        ), None)
-        if solar_home_kw is None and pv_kw is not None and load_kw is not None:
-            solar_home_kw = min(max(0.0, float(pv_kw)), max(0.0, float(load_kw)))
+        pv_kw = max(0.0, float(pv_kw or 0.0))
+        load_kw = max(0.0, float(load_kw or 0.0))
+        grid_import_kw = max(0.0, float(grid_kw or 0.0))
+        grid_export_kw = max(0.0, -float(grid_kw or 0.0))
+
+        solar_home_kw = flow_route_power(snapshot, "pv", "load")
+        if solar_home_kw is None:
+            solar_home_kw = min(pv_kw, load_kw)
+        grid_to_load_kw = flow_route_power(snapshot, "grid", "load")
+        if grid_to_load_kw is None:
+            grid_to_load_kw = min(grid_import_kw, load_kw)
+        grid_to_battery_kw = flow_route_power(snapshot, "grid", "battery")
+        if grid_to_battery_kw is None:
+            grid_to_battery_kw = max(0.0, grid_import_kw - grid_to_load_kw)
+        self_supplied_kw = max(0.0, load_kw - grid_to_load_kw)
+
         slot = insight_slot(data, history_bucket(observed))
         additions = {
-            "pv_kwh": max(0.0, float(pv_kw or 0.0)) * hours,
-            "load_kwh": max(0.0, float(load_kw or 0.0)) * hours,
-            "solar_self_consumed_kwh": max(0.0, float(solar_home_kw or 0.0)) * hours,
-            "grid_import_kwh": max(0.0, float(grid_kw or 0.0)) * hours,
-            "grid_export_kwh": max(0.0, -float(grid_kw or 0.0)) * hours,
+            "pv_kwh": pv_kw * hours,
+            "load_kwh": load_kw * hours,
+            "solar_self_consumed_kwh": solar_home_kw * hours,
+            "grid_import_kwh": grid_import_kw * hours,
+            "grid_export_kwh": grid_export_kw * hours,
+            "grid_to_load_kwh": grid_to_load_kw * hours,
+            "grid_to_battery_kwh": grid_to_battery_kw * hours,
+            "self_supplied_kwh": self_supplied_kw * hours,
             "battery_throughput_kwh": abs(float(battery_kw or 0.0)) * hours,
         }
         for key, value in additions.items():
             slot[key] = float(slot.get(key) or 0.0) + value
+
         import_price = price.get("import_cents_kwh")
         export_price = price.get("export_cents_kwh")
+        import_cost = 0.0
+        export_revenue = 0.0
+        baseline_cost = 0.0
+        avoided_savings = 0.0
+        grid_charging_cost = 0.0
         if import_price is not None:
-            slot["import_cost_cents"] = float(slot.get("import_cost_cents") or 0.0) + additions["grid_import_kwh"] * float(import_price)
+            import_price = float(import_price)
+            import_cost = additions["grid_import_kwh"] * import_price
+            baseline_cost = additions["load_kwh"] * import_price
+            avoided_savings = additions["self_supplied_kwh"] * import_price
+            grid_charging_cost = additions["grid_to_battery_kwh"] * import_price
+            slot["import_cost_cents"] = float(slot.get("import_cost_cents") or 0.0) + import_cost
+            slot["baseline_grid_cost_cents"] = float(slot.get("baseline_grid_cost_cents") or 0.0) + baseline_cost
+            slot["avoided_import_savings_cents"] = float(slot.get("avoided_import_savings_cents") or 0.0) + avoided_savings
+            slot["grid_charging_cost_cents"] = float(slot.get("grid_charging_cost_cents") or 0.0) + grid_charging_cost
         if export_price is not None:
-            slot["export_revenue_cents"] = float(slot.get("export_revenue_cents") or 0.0) + additions["grid_export_kwh"] * float(export_price)
+            export_revenue = additions["grid_export_kwh"] * float(export_price)
+            slot["export_revenue_cents"] = float(slot.get("export_revenue_cents") or 0.0) + export_revenue
+
         wear_rate = float(battery_wear_model(cfg, snapshot).get("effective_rate_cents_kwh") or 0.0)
-        slot["battery_wear_cents"] = float(slot.get("battery_wear_cents") or 0.0) + additions["battery_throughput_kwh"] * wear_rate
+        wear_cost = additions["battery_throughput_kwh"] * wear_rate
+        slot["battery_wear_cents"] = float(slot.get("battery_wear_cents") or 0.0) + wear_cost
+        owner_before_wear = avoided_savings + export_revenue - grid_charging_cost
+        slot["owner_value_before_wear_cents"] = float(slot.get("owner_value_before_wear_cents") or 0.0) + owner_before_wear
+        slot["owner_value_after_wear_cents"] = float(slot.get("owner_value_after_wear_cents") or 0.0) + owner_before_wear - wear_cost
+
         current_slot = next((item for item in price.get("slots") or [] if item.get("is_current")), None)
         if current_slot and current_slot.get("action") == "LIMIT EXPORT":
             slot["negative_price_protection_minutes"] = float(slot.get("negative_price_protection_minutes") or 0.0) + elapsed_seconds / 60.0
         slot["coverage_seconds"] = min(900.0, float(slot.get("coverage_seconds") or 0.0) + elapsed_seconds)
+        slot["owner_coverage_seconds"] = min(900.0, float(slot.get("owner_coverage_seconds") or 0.0) + elapsed_seconds)
         slot["last_observed_at"] = observed.isoformat()
         data["last_observed_at"] = observed.isoformat()
         if not INSIGHTS_FILE.exists() or time.monotonic() - float(INSIGHTS_CACHE["last_saved_monotonic"] or 0.0) >= 30:
@@ -744,8 +810,11 @@ def insights_summary(cfg: EnergyPilotConfig, period: str = "month", start: Optio
         ]
     metric_keys = (
         "pv_kwh", "load_kwh", "solar_self_consumed_kwh", "grid_import_kwh",
-        "grid_export_kwh", "battery_throughput_kwh", "import_cost_cents",
-        "export_revenue_cents", "battery_wear_cents", "negative_price_protection_minutes",
+        "grid_export_kwh", "grid_to_load_kwh", "grid_to_battery_kwh", "self_supplied_kwh",
+        "battery_throughput_kwh", "import_cost_cents", "export_revenue_cents",
+        "baseline_grid_cost_cents", "avoided_import_savings_cents", "grid_charging_cost_cents",
+        "owner_value_before_wear_cents", "owner_value_after_wear_cents",
+        "battery_wear_cents", "negative_price_protection_minutes",
     )
     totals = {key: sum(float(slot.get(key) or 0.0) for slot in selected) for key in metric_keys}
     bill_result = totals["export_revenue_cents"] - totals["import_cost_cents"]
@@ -775,6 +844,7 @@ def insights_summary(cfg: EnergyPilotConfig, period: str = "month", start: Optio
         "period_start": period_start.isoformat(),
         "period_end": period_end.isoformat(),
         "tracking_since": tracking_since,
+        "owner_tracking_since": data.get("owner_tracking_since"),
         "aggregation": "month" if group_monthly else "day",
         "totals": {
             **{key: round(value, 4) for key, value in totals.items()},
@@ -800,6 +870,7 @@ def insights_summary(cfg: EnergyPilotConfig, period: str = "month", start: Optio
         "data_quality": {
             "slot_count": len(selected),
             "coverage_hours": round(sum(float(slot.get("coverage_seconds") or 0.0) for slot in selected) / 3600.0, 2),
+            "owner_coverage_hours": round(sum(float(slot.get("owner_coverage_seconds") or 0.0) for slot in selected) / 3600.0, 2),
             "storage_file": INSIGHTS_FILE.name,
         },
     }
@@ -4217,34 +4288,93 @@ def monthly_benefits(cfg: EnergyPilotConfig, snapshot: dict, price: dict) -> dic
         data.clear()
         data.update({
             "month": month_key, "tracking_since": now.isoformat(),
+            "owner_value_version": 2, "owner_tracking_since": now.isoformat(),
             "last_observed_at": now.isoformat(), "opening_energy_kwh": energy_now,
             "current_energy_kwh": energy_now, "import_kwh": 0.0, "export_kwh": 0.0,
             "import_cost_cents": 0.0, "export_revenue_cents": 0.0,
             "battery_throughput_kwh": 0.0, "wear_cost_cents": 0.0,
             "negative_price_protection_minutes": 0.0,
+            "owner_load_kwh": 0.0, "owner_grid_to_load_kwh": 0.0,
+            "owner_grid_to_battery_kwh": 0.0, "owner_self_supplied_kwh": 0.0,
+            "owner_baseline_grid_cost_cents": 0.0, "owner_import_cost_cents": 0.0,
+            "owner_export_revenue_cents": 0.0, "owner_avoided_import_savings_cents": 0.0,
+            "owner_grid_charging_cost_cents": 0.0, "owner_wear_cost_cents": 0.0,
         })
+    elif int(data.get("owner_value_version") or 1) < 2:
+        data["owner_value_version"] = 2
+        data["owner_tracking_since"] = now.isoformat()
+        for key in (
+            "owner_load_kwh", "owner_grid_to_load_kwh", "owner_grid_to_battery_kwh",
+            "owner_self_supplied_kwh", "owner_baseline_grid_cost_cents",
+            "owner_import_cost_cents", "owner_export_revenue_cents",
+            "owner_avoided_import_savings_cents", "owner_grid_charging_cost_cents",
+            "owner_wear_cost_cents",
+        ):
+            data[key] = 0.0
+    else:
+        data.setdefault("owner_tracking_since", now.isoformat())
+        for key in (
+            "owner_load_kwh", "owner_grid_to_load_kwh", "owner_grid_to_battery_kwh",
+            "owner_self_supplied_kwh", "owner_baseline_grid_cost_cents",
+            "owner_import_cost_cents", "owner_export_revenue_cents",
+            "owner_avoided_import_savings_cents", "owner_grid_charging_cost_cents",
+            "owner_wear_cost_cents",
+        ):
+            data.setdefault(key, 0.0)
+
     previous = parse_time(data.get("last_observed_at"))
     elapsed_hours = max(0.0, min(60.0, (now - previous).total_seconds()) / 3600.0) if previous else 0.0
     grid_kw = snapshot.get("grid", {}).get("power_kw", {}).get("value")
     battery_kw = snapshot.get("battery", {}).get("power_kw", {}).get("value")
+    load_kw = max(0.0, float(snapshot.get("load", {}).get("power_kw", {}).get("value") or 0.0))
+    grid_import_kw = max(0.0, float(grid_kw or 0.0))
+    grid_export_kw = max(0.0, -float(grid_kw or 0.0))
+    grid_to_load_kw = flow_route_power(snapshot, "grid", "load")
+    if grid_to_load_kw is None:
+        grid_to_load_kw = min(load_kw, grid_import_kw)
+    grid_to_battery_kw = flow_route_power(snapshot, "grid", "battery")
+    if grid_to_battery_kw is None:
+        grid_to_battery_kw = max(0.0, grid_import_kw - grid_to_load_kw)
+    self_supplied_kw = max(0.0, load_kw - grid_to_load_kw)
     import_price = price.get("import_cents_kwh")
     export_price = price.get("export_cents_kwh")
-    if elapsed_hours > 0 and grid_kw is not None:
-        if grid_kw >= 0 and import_price is not None:
-            amount = grid_kw * elapsed_hours
-            data["import_kwh"] += amount
-            data["import_cost_cents"] += amount * import_price
-        elif grid_kw < 0 and export_price is not None:
-            amount = -grid_kw * elapsed_hours
-            data["export_kwh"] += amount
-            data["export_revenue_cents"] += amount * export_price
+
+    if elapsed_hours > 0:
+        load_kwh = load_kw * elapsed_hours
+        grid_import_kwh = grid_import_kw * elapsed_hours
+        grid_export_kwh = grid_export_kw * elapsed_hours
+        grid_to_load_kwh = grid_to_load_kw * elapsed_hours
+        grid_to_battery_kwh = grid_to_battery_kw * elapsed_hours
+        self_supplied_kwh = self_supplied_kw * elapsed_hours
+        data["owner_load_kwh"] += load_kwh
+        data["owner_grid_to_load_kwh"] += grid_to_load_kwh
+        data["owner_grid_to_battery_kwh"] += grid_to_battery_kwh
+        data["owner_self_supplied_kwh"] += self_supplied_kwh
+        if grid_kw is not None:
+            if grid_kw >= 0 and import_price is not None:
+                data["import_kwh"] += grid_import_kwh
+                data["import_cost_cents"] += grid_import_kwh * float(import_price)
+            elif grid_kw < 0 and export_price is not None:
+                data["export_kwh"] += grid_export_kwh
+                data["export_revenue_cents"] += grid_export_kwh * float(export_price)
+        if import_price is not None:
+            import_price = float(import_price)
+            data["owner_baseline_grid_cost_cents"] += load_kwh * import_price
+            data["owner_import_cost_cents"] += grid_import_kwh * import_price
+            data["owner_avoided_import_savings_cents"] += self_supplied_kwh * import_price
+            data["owner_grid_charging_cost_cents"] += grid_to_battery_kwh * import_price
+        if export_price is not None:
+            data["owner_export_revenue_cents"] += grid_export_kwh * float(export_price)
+
     wear_rate = battery_wear_model(cfg, snapshot)["effective_rate_cents_kwh"]
     if elapsed_hours > 0 and battery_kw is not None:
-        throughput = abs(battery_kw) * elapsed_hours
+        throughput = abs(float(battery_kw)) * elapsed_hours
+        wear = throughput * wear_rate
         data["battery_throughput_kwh"] += throughput
-        data["wear_cost_cents"] += throughput * wear_rate
-    current_slot = (price.get("slots") or [{}])[0]
-    if elapsed_hours > 0 and current_slot.get("action") == "LIMIT EXPORT":
+        data["wear_cost_cents"] += wear
+        data["owner_wear_cost_cents"] += wear
+    current_slot = next((item for item in price.get("slots") or [] if item.get("is_current")), None)
+    if elapsed_hours > 0 and current_slot and current_slot.get("action") == "LIMIT EXPORT":
         data["negative_price_protection_minutes"] += elapsed_hours * 60.0
     data["last_observed_at"] = now.isoformat()
     data["current_energy_kwh"] = energy_now
@@ -4255,6 +4385,12 @@ def monthly_benefits(cfg: EnergyPilotConfig, snapshot: dict, price: dict) -> dic
         if energy_now is not None and opening is not None else 0.0
     )
     operating = data["export_revenue_cents"] - data["import_cost_cents"] - data["wear_cost_cents"]
+    owner_before_wear = (
+        data["owner_avoided_import_savings_cents"]
+        + data["owner_export_revenue_cents"]
+        - data["owner_grid_charging_cost_cents"]
+    )
+    owner_after_wear = owner_before_wear - data["owner_wear_cost_cents"]
     if time.monotonic() - BENEFITS_CACHE["last_saved_monotonic"] >= 60:
         try:
             atomic_write(BENEFITS_FILE, data)
@@ -4264,6 +4400,7 @@ def monthly_benefits(cfg: EnergyPilotConfig, snapshot: dict, price: dict) -> dic
     return {
         "period": month_key,
         "tracking_since": data["tracking_since"],
+        "owner_tracking_since": data.get("owner_tracking_since"),
         "import_kwh": round(data["import_kwh"], 3),
         "export_kwh": round(data["export_kwh"], 3),
         "import_cost_cents": round(data["import_cost_cents"], 2),
@@ -4275,23 +4412,62 @@ def monthly_benefits(cfg: EnergyPilotConfig, snapshot: dict, price: dict) -> dic
         "net_cents": round(operating + inventory_change, 2),
         "negative_price_protection_minutes": round(data["negative_price_protection_minutes"], 1),
         "bill_result_cents": round(data["export_revenue_cents"] - data["import_cost_cents"], 2),
-        "result_after_wear_cents": round(data["export_revenue_cents"] - data["import_cost_cents"] - data["wear_cost_cents"], 2),
+        "owner_load_kwh": round(data["owner_load_kwh"], 3),
+        "owner_grid_to_load_kwh": round(data["owner_grid_to_load_kwh"], 3),
+        "owner_grid_to_battery_kwh": round(data["owner_grid_to_battery_kwh"], 3),
+        "owner_self_supplied_kwh": round(data["owner_self_supplied_kwh"], 3),
+        "owner_baseline_grid_cost_cents": round(data["owner_baseline_grid_cost_cents"], 2),
+        "owner_import_cost_cents": round(data["owner_import_cost_cents"], 2),
+        "owner_export_revenue_cents": round(data["owner_export_revenue_cents"], 2),
+        "owner_avoided_import_savings_cents": round(data["owner_avoided_import_savings_cents"], 2),
+        "owner_grid_charging_cost_cents": round(data["owner_grid_charging_cost_cents"], 2),
+        "owner_wear_cost_cents": round(data["owner_wear_cost_cents"], 2),
+        "owner_value_before_wear_cents": round(owner_before_wear, 2),
+        "owner_value_after_wear_cents": round(owner_after_wear, 2),
+        "result_after_wear_cents": round(owner_after_wear, 2),
     }
 
 
-def energy_value_payload(cfg: EnergyPilotConfig, snapshot: dict, price: dict, measured: dict) -> dict:
-    """Build the Overview Energy value card from measured month data and the active Planner horizon."""
+def energy_value_payload(
+    cfg: EnergyPilotConfig,
+    snapshot: dict,
+    price: dict,
+    measured: dict,
+    owner_history: Optional[dict] = None,
+) -> dict:
+    """Build Energy value using invoice cash flow plus avoided grid purchases."""
     plan = price.get("plan") or {}
     horizon_financial = plan.get("horizon_financial") or {}
     slots = price.get("slots") or []
     duration_hours = cfg.planning.slot_minutes / 60.0
     horizon_import_kwh = sum(float(slot.get("grid_import_kw") or 0.0) * duration_hours for slot in slots)
     horizon_export_kwh = sum(float(slot.get("grid_export_kw") or 0.0) * duration_hours for slot in slots)
+    horizon_load_kwh = 0.0
+    horizon_self_supplied_kwh = 0.0
+    horizon_grid_charging_kwh = 0.0
+    horizon_baseline_cost = 0.0
+    horizon_avoided_savings = 0.0
+    horizon_grid_charging_cost = 0.0
+    for slot in slots:
+        load_kw = max(0.0, float(slot.get("load_forecast_kw") or 0.0))
+        grid_import_kw = max(0.0, float(slot.get("grid_import_kw") or 0.0))
+        grid_to_load_kw = min(load_kw, grid_import_kw)
+        self_supplied_kw = max(0.0, load_kw - grid_to_load_kw)
+        grid_charging_kw = max(0.0, grid_import_kw - grid_to_load_kw)
+        import_price = float(slot.get("import_cents_kwh") or 0.0)
+        horizon_load_kwh += load_kw * duration_hours
+        horizon_self_supplied_kwh += self_supplied_kw * duration_hours
+        horizon_grid_charging_kwh += grid_charging_kw * duration_hours
+        horizon_baseline_cost += load_kw * duration_hours * import_price
+        horizon_avoided_savings += self_supplied_kw * duration_hours * import_price
+        horizon_grid_charging_cost += grid_charging_kw * duration_hours * import_price
+
     horizon_import_cost = float(horizon_financial.get("import_cost_cents") or 0.0)
     horizon_export_revenue = float(horizon_financial.get("export_revenue_cents") or 0.0)
     horizon_wear = float(horizon_financial.get("wear_cost_cents") or 0.0)
     horizon_bill_result = horizon_export_revenue - horizon_import_cost
-    horizon_after_wear = horizon_bill_result - horizon_wear
+    horizon_owner_before_wear = horizon_avoided_savings + horizon_export_revenue - horizon_grid_charging_cost
+    horizon_owner_after_wear = horizon_owner_before_wear - horizon_wear
     horizon_minutes = sum(
         cfg.planning.slot_minutes
         for slot in slots
@@ -4301,29 +4477,39 @@ def energy_value_payload(cfg: EnergyPilotConfig, snapshot: dict, price: dict, me
     observed = parse_time(snapshot.get("observed_at")) or datetime.now(timezone.utc)
     local_observed = observed.astimezone(ZoneInfo(cfg.site.timezone))
     measured_bill_result = float(measured.get("bill_result_cents") or 0.0)
-    measured_after_wear = float(measured.get("result_after_wear_cents") or 0.0)
-    tracking_since = parse_time(measured.get("tracking_since"))
-    elapsed_days = max(
+    measured_owner_before_wear = float(measured.get("owner_value_before_wear_cents") or 0.0)
+    measured_owner_after_wear = float(measured.get("owner_value_after_wear_cents") or 0.0)
+
+    history = owner_history or {}
+    history_totals = history.get("totals") or {}
+    history_owner_after_wear = float(history_totals.get("owner_value_after_wear_cents") or 0.0)
+    owner_tracking_since_raw = history.get("owner_tracking_since") or measured.get("owner_tracking_since")
+    owner_tracking_since = parse_time(owner_tracking_since_raw)
+    owner_elapsed_days = max(
         1.0 / 24.0,
-        (observed - tracking_since).total_seconds() / 86400.0 if tracking_since else 0.0,
+        (observed - owner_tracking_since).total_seconds() / 86400.0 if owner_tracking_since else 0.0,
     )
+    owner_coverage_hours = float((history.get("data_quality") or {}).get("owner_coverage_hours") or 0.0)
+    measured_available = bool(owner_tracking_since and owner_coverage_hours >= 1.0)
+    measured_daily = history_owner_after_wear / owner_elapsed_days if measured_available else 0.0
     horizon_days = max(1.0 / 24.0, cfg.planning.horizon_hours / 24.0)
-    measured_daily = measured_after_wear / elapsed_days
-    horizon_daily = horizon_after_wear / horizon_days
-    measured_weight = min(1.0, elapsed_days / 14.0)
-    if measured_daily > 0 and horizon_daily > 0:
+    horizon_available = bool(slots)
+    horizon_daily = horizon_owner_after_wear / horizon_days if horizon_available else 0.0
+    measured_weight = min(0.85, owner_elapsed_days / 30.0) if measured_available else 0.0
+    if measured_available and horizon_available:
         projected_daily_cents = measured_daily * measured_weight + horizon_daily * (1.0 - measured_weight)
-        projection_basis = "blended_measured_and_planner"
-    elif measured_daily > 0:
+        projection_basis = "blended_owner_value"
+    elif measured_available:
         projected_daily_cents = measured_daily
-        projection_basis = "measured_run_rate"
-    elif horizon_daily > 0:
+        projection_basis = "measured_owner_value"
+    elif horizon_available:
         projected_daily_cents = horizon_daily
-        projection_basis = "planner_run_rate"
+        projection_basis = "planner_owner_value"
     else:
         projected_daily_cents = 0.0
         projection_basis = "unavailable"
 
+    projection_preliminary = owner_elapsed_days < 30.0 or owner_coverage_hours < 24.0 * 7.0
     battery_cost = float(cfg.battery_policy.system_cost_eur or 0.0)
     pv_cost = float(cfg.economics.pv_system_cost_eur or 0.0)
     total_cost = battery_cost + pv_cost
@@ -4340,14 +4526,23 @@ def energy_value_payload(cfg: EnergyPilotConfig, snapshot: dict, price: dict, me
             "period": month_period,
             "period_label": local_observed.strftime("%b %Y"),
             "tracking_since": measured.get("tracking_since"),
+            "owner_tracking_since": measured.get("owner_tracking_since"),
             "bill_result_cents": round(measured_bill_result, 2),
             "invoice_amount_cents": round(-measured_bill_result, 2),
             "export_revenue_cents": round(float(measured.get("export_revenue_cents") or 0.0), 2),
             "export_kwh": round(float(measured.get("export_kwh") or 0.0), 3),
             "import_cost_cents": round(float(measured.get("import_cost_cents") or 0.0), 2),
             "import_kwh": round(float(measured.get("import_kwh") or 0.0), 3),
-            "wear_cost_cents": round(float(measured.get("wear_cost_cents") or 0.0), 2),
-            "result_after_wear_cents": round(measured_after_wear, 2),
+            "load_kwh": round(float(measured.get("owner_load_kwh") or 0.0), 3),
+            "self_supplied_kwh": round(float(measured.get("owner_self_supplied_kwh") or 0.0), 3),
+            "grid_charging_kwh": round(float(measured.get("owner_grid_to_battery_kwh") or 0.0), 3),
+            "baseline_grid_cost_cents": round(float(measured.get("owner_baseline_grid_cost_cents") or 0.0), 2),
+            "avoided_import_savings_cents": round(float(measured.get("owner_avoided_import_savings_cents") or 0.0), 2),
+            "grid_charging_cost_cents": round(float(measured.get("owner_grid_charging_cost_cents") or 0.0), 2),
+            "wear_cost_cents": round(float(measured.get("owner_wear_cost_cents") or 0.0), 2),
+            "owner_value_before_wear_cents": round(measured_owner_before_wear, 2),
+            "owner_value_after_wear_cents": round(measured_owner_after_wear, 2),
+            "result_after_wear_cents": round(measured_owner_after_wear, 2),
             "price_protection_minutes": round(float(measured.get("negative_price_protection_minutes") or 0.0), 1),
         },
         "planning_horizon": {
@@ -4355,14 +4550,23 @@ def energy_value_payload(cfg: EnergyPilotConfig, snapshot: dict, price: dict, me
             "period": f"{cfg.planning.horizon_hours}h",
             "period_label": f"{cfg.planning.horizon_hours} h",
             "tracking_since": snapshot.get("observed_at"),
+            "owner_tracking_since": snapshot.get("observed_at"),
             "bill_result_cents": round(horizon_bill_result, 2),
             "invoice_amount_cents": round(-horizon_bill_result, 2),
             "export_revenue_cents": round(horizon_export_revenue, 2),
             "export_kwh": round(horizon_export_kwh, 3),
             "import_cost_cents": round(horizon_import_cost, 2),
             "import_kwh": round(horizon_import_kwh, 3),
+            "load_kwh": round(horizon_load_kwh, 3),
+            "self_supplied_kwh": round(horizon_self_supplied_kwh, 3),
+            "grid_charging_kwh": round(horizon_grid_charging_kwh, 3),
+            "baseline_grid_cost_cents": round(horizon_baseline_cost, 2),
+            "avoided_import_savings_cents": round(horizon_avoided_savings, 2),
+            "grid_charging_cost_cents": round(horizon_grid_charging_cost, 2),
             "wear_cost_cents": round(horizon_wear, 2),
-            "result_after_wear_cents": round(horizon_after_wear, 2),
+            "owner_value_before_wear_cents": round(horizon_owner_before_wear, 2),
+            "owner_value_after_wear_cents": round(horizon_owner_after_wear, 2),
+            "result_after_wear_cents": round(horizon_owner_after_wear, 2),
             "price_protection_minutes": round(float(horizon_minutes), 1),
         },
         "investment": {
@@ -4372,6 +4576,10 @@ def energy_value_payload(cfg: EnergyPilotConfig, snapshot: dict, price: dict, me
             "annualized_owner_value_eur": round(annualized_owner_value_eur, 2),
             "projected_payback_months": round(payback_months, 1) if payback_months is not None else None,
             "projection_basis": projection_basis,
+            "projection_is_preliminary": projection_preliminary,
+            "projection_coverage_days": round(owner_elapsed_days, 1) if owner_tracking_since else 0.0,
+            "projection_coverage_hours": round(owner_coverage_hours, 1),
+            "includes_avoided_grid_purchases": True,
         },
     }
 
@@ -4398,11 +4606,12 @@ def get_overview():
     record_insights(cfg, snapshot, price)
     qilowatt = qilowatt_snapshot(cfg)
     benefits = monthly_benefits(cfg, snapshot, price)
-    energy_value = energy_value_payload(cfg, snapshot, price, benefits)
+    owner_history = insights_summary(cfg, "lifetime")
+    energy_value = energy_value_payload(cfg, snapshot, price, benefits, owner_history)
     update_learning(cfg, snapshot, price)
     planner = planner_snapshot(cfg, snapshot, price, qilowatt)
     return {
-        "api_version": 3,
+        "api_version": 4,
         "version": VERSION,
         "observed_at": snapshot["observed_at"],
         "site": {"name": cfg.site.name},

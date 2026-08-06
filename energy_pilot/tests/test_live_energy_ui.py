@@ -59,17 +59,22 @@ class LiveEnergyUiTests(unittest.TestCase):
     def test_frontend_is_served_from_separate_static_assets(self):
         self.assertNotIn("<style>", self.html)
         self.assertNotIn("<script>", self.html)
-        self.assertIn('href="static/styles.css?v=0.3.5-energy-value"', self.html)
-        self.assertIn('src="static/app.js?v=0.3.5-energy-value"', self.html)
+        self.assertIn('href="static/styles.css?v=0.3.6-owner-value"', self.html)
+        self.assertIn('src="static/app.js?v=0.3.6-owner-value"', self.html)
 
     def test_custom_energy_icons_and_favicon_are_used(self):
-        self.assertIn('href="static/house.svg?v=0.3.5"', self.html)
+        self.assertIn('href="static/house.svg?v=0.3.6"', self.html)
 
 
     def test_pv_investment_setting_is_exposed_and_persisted(self):
         self.assertIn('id="pvSystemCost"', self.html)
         self.assertIn("cfg.economics?.pv_system_cost_eur", self.js)
         self.assertIn("data.economics={pv_system_cost_eur", self.js)
+
+    def test_energy_value_includes_avoided_grid_purchases(self):
+        self.assertIn("Avoided grid purchases", self.js)
+        self.assertIn("grid_charging_cost_cents", self.js)
+        self.assertIn("owner_value_after_wear_cents", self.js)
 
     def test_price_breakdown_popovers_are_available(self):
         self.assertIn("price-breakdown-trigger", self.js)
