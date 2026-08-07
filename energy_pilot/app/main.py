@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-VERSION = "0.3.12"
+VERSION = "0.3.13"
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 CONFIG_DIR = Path("/config")
@@ -3454,6 +3454,26 @@ def apply_manual_overrides(
         grid_import = min(cfg.grid_policy.max_import_kw * duration, max(0.0, grid_kwh))
         grid_export_limit = 0.0 if action == "LIMIT EXPORT" else cfg.grid_policy.max_export_kw * duration
         grid_export = min(grid_export_limit, max(0.0, -grid_kwh))
+
+        # The inverter's persistent AC/grid-side draw cannot be covered by the
+        # modeled battery/PV balance. apply_slot_plan adds it before this pass,
+        # but manual-override reconciliation recalculates every slot from scratch,
+        # so re-apply the parasitic draw here as the final meter balance.
+        overhead_kwh = max(
+            0.0,
+            float(slot.get("grid_overhead_kwh") or 0.0)
+            or float(slot.get("grid_overhead_kw") or 0.0) * duration,
+        )
+        if overhead_kwh > 0:
+            if grid_export > 0:
+                absorbed = min(grid_export, overhead_kwh)
+                grid_export -= absorbed
+                grid_import += max(0.0, overhead_kwh - absorbed)
+            else:
+                grid_import += overhead_kwh
+            grid_import = min(cfg.grid_policy.max_import_kw * duration, grid_import)
+            slot["grid_overhead_kwh"] = round(overhead_kwh, 6)
+
         cash_cost = (
             grid_import * float(slot.get("import_cents_kwh") or 0.0)
             - grid_export * float(slot.get("export_cents_kwh") or 0.0)

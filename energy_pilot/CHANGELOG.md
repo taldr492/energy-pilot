@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.13
+- planner: preserve learned inverter grid overhead through the final manual-override reconciliation pass
+- flow/API: future LIMIT EXPORT and other non-export slots now retain the parasitic grid import in `grid_import_kw`
+- economics: the same parasitic import remains included in final slot cash cost
+
 ## 0.3.12
 - planner: bootstrap inverter grid-overhead from existing measurement history
 - planner: model inverter overhead as grid-side parasitic draw so battery cannot unrealistically erase it

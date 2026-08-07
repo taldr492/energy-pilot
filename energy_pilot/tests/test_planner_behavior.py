@@ -412,3 +412,37 @@ class PlannerManualOverrideEndpointTests(unittest.TestCase):
         self.assertEqual(result["saved_count"], 1)
         self.assertEqual(len(stored), 1)
         self.assertEqual(next(iter(stored.values()))["action"], "NORMAL")
+
+class PlannerGridOverheadReconciliationTests(unittest.TestCase):
+    def test_manual_reconciliation_preserves_grid_overhead_for_limit_export(self):
+        cfg = main.EnergyPilotConfig()
+        slots = [{
+            "start": datetime(2026, 8, 7, 10, 0, tzinfo=timezone.utc).isoformat(),
+            "action": "LIMIT EXPORT",
+            "pv_forecast_kw": 4.0,
+            "load_forecast_kw": 0.8,
+            "import_cents_kwh": 20.0,
+            "export_cents_kwh": -1.0,
+            "charge_kw": 0.0,
+            "discharge_kw": 0.0,
+            "grid_overhead_kw": 0.08,
+            "grid_overhead_kwh": 0.02,
+        }]
+
+        main.apply_manual_overrides(
+            cfg,
+            slots,
+            capacity=40.0,
+            initial_energy=20.0,
+            reserve_kwh=6.0,
+            max_kwh=40.0,
+            duration=0.25,
+            efficiency=0.95,
+            wear_rate=1.0,
+            overrides={},
+        )
+
+        self.assertEqual(slots[0]["action"], "LIMIT EXPORT")
+        self.assertAlmostEqual(slots[0]["grid_import_kw"], 0.08, places=2)
+        self.assertEqual(slots[0]["grid_export_kw"], 0.0)
+        self.assertAlmostEqual(slots[0]["slot_cash_cost_cents"], 0.4, places=4)
