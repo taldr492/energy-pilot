@@ -1,3 +1,10 @@
+# Changelog
+
+## 0.3.11
+- planner: add learned inverter grid overhead into future load/economics so standby import is no longer forecast as 0 W
+- planner: expose per-slot `grid_overhead_kw` in slot payloads
+- ui/web cache bust update
+
 ## 0.3.10
 
 - Changed native Overview measurement history from a calendar-day slice to a rolling 24-hour window, so the six-hour past flow chart remains continuous across midnight.

@@ -237,10 +237,13 @@ def load_learning() -> dict:
         if isinstance(raw, dict):
             raw.setdefault("load_profiles", {})
             raw.setdefault("pv_factors", {})
+            raw.setdefault("grid_overhead_profiles", {})
+            raw.setdefault("grid_overhead_global_kw", None)
+            raw.setdefault("grid_overhead_global_count", 0)
             return raw
     except (OSError, ValueError):
         pass
-    return {"version": 1, "last_sample_at": None, "load_profiles": {}, "pv_factors": {}}
+    return {"version": 1, "last_sample_at": None, "load_profiles": {}, "pv_factors": {}, "grid_overhead_profiles": {}, "grid_overhead_global_kw": None, "grid_overhead_global_count": 0}
 
 
 def learning_bucket(stamp: datetime, timezone_name: str) -> str:
@@ -267,6 +270,44 @@ def learned_load_points(cfg: EnergyPilotConfig, slots: list[dict]) -> tuple[list
     }
 
 
+def learned_grid_overhead_points(cfg: EnergyPilotConfig, slots: list[dict]) -> tuple[list[float], dict]:
+    learning = load_learning()
+    profiles = learning.get("grid_overhead_profiles", {}) or {}
+    global_value = learning.get("grid_overhead_global_kw")
+    global_count = int(learning.get("grid_overhead_global_count") or 0)
+    values, counts = [], []
+    for slot in slots:
+        stamp = parse_time(slot.get("start"))
+        profile = profiles.get(learning_bucket(stamp, cfg.site.timezone), {}) if stamp else {}
+        count = int(profile.get("count") or 0)
+        if count >= 3 and profile.get("value") is not None:
+            value = float(profile.get("value") or 0.0)
+        elif global_count >= 6 and global_value is not None:
+            value = float(global_value or 0.0)
+        else:
+            value = 0.0
+        values.append(round(max(0.0, value), 3))
+        counts.append(count)
+    usable = [value for value in values if value > 0]
+    return values, {
+        "available": bool(usable),
+        "mode": "learned_grid_overhead",
+        "points": len(usable),
+        "global_kw": round(float(global_value or 0.0), 3) if global_value is not None else None,
+        "global_samples": global_count,
+        "average_kw": round(sum(usable) / len(usable), 3) if usable else 0.0,
+    }
+
+
+def apply_inverter_overhead(load_values: list[Optional[float]], overhead_values: list[float]) -> list[float]:
+    result = []
+    for index, value in enumerate(load_values):
+        base = max(0.0, float(value or 0.0))
+        overhead = max(0.0, float(overhead_values[index] if index < len(overhead_values) else 0.0))
+        result.append(round(base + overhead, 4))
+    return result
+
+
 def pv_learning_factor(cfg: EnergyPilotConfig, stamp: Optional[datetime]) -> tuple[float, int]:
     if stamp is None:
         return 1.0, 0
@@ -284,6 +325,8 @@ def update_learning(cfg: EnergyPilotConfig, snapshot: dict, price: dict) -> None
         return
     load_kw = snapshot.get("load", {}).get("power_kw", {}).get("value")
     pv_kw = snapshot.get("pv", {}).get("power_kw", {}).get("value")
+    grid_kw = snapshot.get("grid", {}).get("power_kw", {}).get("value")
+    battery_kw = snapshot.get("battery", {}).get("power_kw", {}).get("value")
     if load_kw is not None and load_kw >= 0:
         key = learning_bucket(observed, cfg.site.timezone)
         profile = learning["load_profiles"].setdefault(key, {"value": float(load_kw), "count": 0})
@@ -303,6 +346,24 @@ def update_learning(cfg: EnergyPilotConfig, snapshot: dict, price: dict) -> None
         alpha = 0.12 if count < 10 else 0.04
         profile["value"] = round((1 - alpha) * float(profile.get("value") or 1.0) + alpha * ratio, 4)
         profile["count"] = min(10000, count + 1)
+    if (
+        grid_kw is not None and battery_kw is not None and pv_kw is not None
+        and 0.03 <= float(grid_kw) <= 0.25
+        and abs(float(battery_kw)) <= 0.35
+        and float(pv_kw) <= 0.25
+    ):
+        slot_key = learning_bucket(observed, cfg.site.timezone)
+        profile = learning["grid_overhead_profiles"].setdefault(slot_key, {"value": float(grid_kw), "count": 0})
+        count = int(profile.get("count") or 0)
+        alpha = 0.20 if count < 12 else 0.06
+        profile["value"] = round((1 - alpha) * float(profile.get("value") or grid_kw) + alpha * float(grid_kw), 4)
+        profile["count"] = min(10000, count + 1)
+        global_count = int(learning.get("grid_overhead_global_count") or 0)
+        global_value = learning.get("grid_overhead_global_kw")
+        global_alpha = 0.18 if global_count < 20 else 0.05
+        base_global = float(global_value) if global_value is not None else float(grid_kw)
+        learning["grid_overhead_global_kw"] = round((1 - global_alpha) * base_global + global_alpha * float(grid_kw), 4)
+        learning["grid_overhead_global_count"] = min(10000, global_count + 1)
     learning["last_sample_at"] = observed.isoformat()
     atomic_write(LEARNING_FILE, learning)
 
@@ -2623,6 +2684,8 @@ def apply_slot_plan(cfg: EnergyPilotConfig, snapshot: dict, price: dict) -> None
     live_load = snapshot["load"]["power_kw"].get("value")
     fallback_load = fc.fallback_load_kw if fc.fallback_load_kw is not None else live_load
     load_values = [value if value is not None else max(0.0, fallback_load or 0.0) for value in load_values]
+    overhead_values, overhead_status = learned_grid_overhead_points(cfg, slots)
+    load_values = apply_inverter_overhead(load_values, overhead_values)
     pv_raw_values = list(pv_values)
     pv_calibration = [pv_learning_factor(cfg, parse_time(slot.get("start"))) for slot in slots]
     pv_values = [
@@ -3374,6 +3437,8 @@ def apply_slot_plan(
     live_load = snapshot["load"]["power_kw"].get("value")
     fallback_load = fc.fallback_load_kw if fc.fallback_load_kw is not None else live_load
     load_values = [value if value is not None else max(0.0, fallback_load or 0.0) for value in load_values]
+    overhead_values, overhead_status = learned_grid_overhead_points(cfg, slots)
+    load_values = apply_inverter_overhead(load_values, overhead_values)
     pv_raw_values = list(pv_values)
     pv_calibration = [pv_learning_factor(cfg, parse_time(slot.get("start"))) for slot in slots]
     pv_values = [
@@ -3521,6 +3586,7 @@ def apply_slot_plan(
             "pv_raw_forecast_kw": round(pv_raw_values[index], 3) if pv_raw_values[index] is not None else None,
             "pv_calibration_factor": round(pv_calibration[index][0], 3),
             "load_forecast_kw": round(load_kw, 3),
+            "grid_overhead_kw": round(overhead_values[index], 3),
             "soc_before_percent": round(result["before"] / capacity * 100.0, 1),
             "soc_after_percent": round(result["after"] / capacity * 100.0, 1),
             "charge_kw": round(max(0.0, delta) / duration / efficiency, 2),
@@ -3654,6 +3720,7 @@ def apply_slot_plan(
         "optimizer": "global_dynamic_programming", "pv_forecast": pv_status,
         "behavior": solar_policy,
         "load_forecast": load_status,
+        "grid_overhead": overhead_status,
         "load_fallback_kw": round(fallback_load, 3) if fallback_load is not None else None,
         "initial_soc_percent": round(initial_soc, 1),
         "final_soc_percent": round(override_result["final_energy_kwh"] / capacity * 100.0, 1),
