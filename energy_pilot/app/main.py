@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-VERSION = "0.3.10"
+VERSION = "0.3.12"
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 CONFIG_DIR = Path("/config")
@@ -270,42 +270,110 @@ def learned_load_points(cfg: EnergyPilotConfig, slots: list[dict]) -> tuple[list
     }
 
 
+def measurement_grid_overhead_estimate() -> tuple[Optional[float], int]:
+    """Estimate the inverter's persistent low grid draw from measured history.
+
+    We intentionally use only low, positive import slots with no simultaneous
+    export. This captures the Deye zero-export / standby bias without treating
+    ordinary household grid demand as inverter overhead. The lower-middle
+    percentile is conservative and robust against occasional larger loads.
+    """
+    data = load_measurement_history()
+    candidates: list[float] = []
+    for slot in (data.get("slots") or {}).values():
+        grid_import = history_metric_value(slot, "grid_import_kw")
+        grid_export = history_metric_value(slot, "grid_export_kw") or 0.0
+        if grid_import is None:
+            continue
+        value = float(grid_import)
+        if grid_export <= 0.01 and 0.03 <= value <= 0.25:
+            candidates.append(value)
+    candidates.sort()
+    if len(candidates) < 4:
+        return None, len(candidates)
+    index = int(round((len(candidates) - 1) * 0.35))
+    return max(0.0, candidates[index]), len(candidates)
+
+
 def learned_grid_overhead_points(cfg: EnergyPilotConfig, slots: list[dict]) -> tuple[list[float], dict]:
     learning = load_learning()
     profiles = learning.get("grid_overhead_profiles", {}) or {}
-    global_value = learning.get("grid_overhead_global_kw")
-    global_count = int(learning.get("grid_overhead_global_count") or 0)
-    values, counts = [], []
+    learned_global = learning.get("grid_overhead_global_kw")
+    learned_count = int(learning.get("grid_overhead_global_count") or 0)
+    measured_global, measured_count = measurement_grid_overhead_estimate()
+    fallback_global = measured_global if measured_global is not None else (
+        float(learned_global) if learned_global is not None and learned_count >= 3 else 0.0
+    )
+    values = []
+    profile_points = 0
     for slot in slots:
         stamp = parse_time(slot.get("start"))
         profile = profiles.get(learning_bucket(stamp, cfg.site.timezone), {}) if stamp else {}
         count = int(profile.get("count") or 0)
         if count >= 3 and profile.get("value") is not None:
             value = float(profile.get("value") or 0.0)
-        elif global_count >= 6 and global_value is not None:
-            value = float(global_value or 0.0)
+            profile_points += 1
         else:
-            value = 0.0
+            value = fallback_global
         values.append(round(max(0.0, value), 3))
-        counts.append(count)
     usable = [value for value in values if value > 0]
+    source = "measurement_history" if measured_global is not None else (
+        "learned_live" if fallback_global > 0 else "unavailable"
+    )
     return values, {
         "available": bool(usable),
         "mode": "learned_grid_overhead",
+        "source": source,
         "points": len(usable),
-        "global_kw": round(float(global_value or 0.0), 3) if global_value is not None else None,
-        "global_samples": global_count,
+        "profile_points": profile_points,
+        "history_samples": measured_count,
+        "global_kw": round(fallback_global, 3) if fallback_global > 0 else None,
         "average_kw": round(sum(usable) / len(usable), 3) if usable else 0.0,
     }
 
 
-def apply_inverter_overhead(load_values: list[Optional[float]], overhead_values: list[float]) -> list[float]:
-    result = []
-    for index, value in enumerate(load_values):
-        base = max(0.0, float(value or 0.0))
-        overhead = max(0.0, float(overhead_values[index] if index < len(overhead_values) else 0.0))
-        result.append(round(base + overhead, 4))
-    return result
+def apply_grid_overhead_to_plan(
+    slots: list[dict], plan: dict, overhead_values: list[float], duration: float,
+) -> dict:
+    """Apply inverter parasitic draw as grid-side energy, not battery-served load.
+
+    When the plan is importing or holding zero export, the overhead remains a
+    small mandatory grid import. During export it reduces exported energy first,
+    which avoids modelling simultaneous import and export at the same meter.
+    """
+    path = plan.get("path") or []
+    cash_delta = 0.0
+    for index, result in enumerate(path):
+        overhead_kw = max(0.0, float(overhead_values[index] if index < len(overhead_values) else 0.0))
+        overhead_kwh = overhead_kw * duration
+        if overhead_kwh <= 0:
+            result["grid_overhead_kwh"] = 0.0
+            continue
+        old_cash = float(result.get("cash_cost_cents") or 0.0)
+        grid_import = max(0.0, float(result.get("grid_import_kwh") or 0.0))
+        grid_export = max(0.0, float(result.get("grid_export_kwh") or 0.0))
+        if grid_export > 0:
+            absorbed = min(grid_export, overhead_kwh)
+            grid_export -= absorbed
+            grid_import += max(0.0, overhead_kwh - absorbed)
+        else:
+            grid_import += overhead_kwh
+        import_price = float(slots[index].get("import_cents_kwh") or 0.0)
+        export_price = float(slots[index].get("export_cents_kwh") or 0.0)
+        new_cash = grid_import * import_price - grid_export * export_price
+        result.update({
+            "grid_import_kwh": grid_import,
+            "grid_export_kwh": grid_export,
+            "grid_overhead_kwh": overhead_kwh,
+            "cash_cost_cents": new_cash,
+        })
+        cash_delta += new_cash - old_cash
+    if cash_delta:
+        plan["cash_cost_cents"] = float(plan.get("cash_cost_cents") or 0.0) + cash_delta
+        if plan.get("objective_cents") is not None:
+            plan["objective_cents"] = float(plan.get("objective_cents") or 0.0) + cash_delta
+    plan["grid_overhead_cost_cents"] = round(cash_delta, 6)
+    return plan
 
 
 def pv_learning_factor(cfg: EnergyPilotConfig, stamp: Optional[datetime]) -> tuple[float, int]:
@@ -346,12 +414,7 @@ def update_learning(cfg: EnergyPilotConfig, snapshot: dict, price: dict) -> None
         alpha = 0.12 if count < 10 else 0.04
         profile["value"] = round((1 - alpha) * float(profile.get("value") or 1.0) + alpha * ratio, 4)
         profile["count"] = min(10000, count + 1)
-    if (
-        grid_kw is not None and battery_kw is not None and pv_kw is not None
-        and 0.03 <= float(grid_kw) <= 0.25
-        and abs(float(battery_kw)) <= 0.35
-        and float(pv_kw) <= 0.25
-    ):
+    if grid_kw is not None and 0.03 <= float(grid_kw) <= 0.25:
         slot_key = learning_bucket(observed, cfg.site.timezone)
         profile = learning["grid_overhead_profiles"].setdefault(slot_key, {"value": float(grid_kw), "count": 0})
         count = int(profile.get("count") or 0)
@@ -2685,7 +2748,6 @@ def apply_slot_plan(cfg: EnergyPilotConfig, snapshot: dict, price: dict) -> None
     fallback_load = fc.fallback_load_kw if fc.fallback_load_kw is not None else live_load
     load_values = [value if value is not None else max(0.0, fallback_load or 0.0) for value in load_values]
     overhead_values, overhead_status = learned_grid_overhead_points(cfg, slots)
-    load_values = apply_inverter_overhead(load_values, overhead_values)
     pv_raw_values = list(pv_values)
     pv_calibration = [pv_learning_factor(cfg, parse_time(slot.get("start"))) for slot in slots]
     pv_values = [
@@ -3438,7 +3500,6 @@ def apply_slot_plan(
     fallback_load = fc.fallback_load_kw if fc.fallback_load_kw is not None else live_load
     load_values = [value if value is not None else max(0.0, fallback_load or 0.0) for value in load_values]
     overhead_values, overhead_status = learned_grid_overhead_points(cfg, slots)
-    load_values = apply_inverter_overhead(load_values, overhead_values)
     pv_raw_values = list(pv_values)
     pv_calibration = [pv_learning_factor(cfg, parse_time(slot.get("start"))) for slot in slots]
     pv_values = [
@@ -3494,10 +3555,12 @@ def apply_slot_plan(
         optimizer_cfg, slots, pv_values, load_values, optimized, initial_energy,
         reserve_kwh, max_kwh, duration, efficiency, solar_policy,
     )
+    optimized = apply_grid_overhead_to_plan(slots, optimized, overhead_values, duration)
     baseline = _planner_v3_normal_baseline(
         slots, pv_values, load_values, initial_energy, reserve_kwh, max_kwh,
         duration, efficiency, policy, optimizer_cfg.grid_policy,
     )
+    baseline = apply_grid_overhead_to_plan(slots, baseline, overhead_values, duration)
     baseline_headroom_cost = solar_headroom_cost(baseline["path"], solar_policy)
     baseline_objective = (
         baseline["cash_cost_cents"]
@@ -3596,6 +3659,7 @@ def apply_slot_plan(
             "grid_charge_kwh": round(grid_charge_kwh, 4),
             "grid_charge_kw": round(grid_charge_kwh / duration, 3),
             "grid_charge_gain_cents_kwh": round(float(result.get("grid_charge_gain_cents_kwh") or 0.0), 3),
+            "grid_overhead_kwh": round(float(result.get("grid_overhead_kwh") or 0.0), 4),
             "slot_cash_cost_cents": round(result["cash_cost_cents"], 3),
             "slot_wear_cost_cents": round(result["wear_cost_cents"], 6),
             "wear_rate_cents_kwh": policy.degradation_cost_cents_kwh,

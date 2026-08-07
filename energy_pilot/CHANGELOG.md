@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.12
+- planner: bootstrap inverter grid-overhead from existing measurement history
+- planner: model inverter overhead as grid-side parasitic draw so battery cannot unrealistically erase it
+- planner: include overhead in future grid flow and slot economics
+
 ## 0.3.11
 - planner: add learned inverter grid overhead into future load/economics so standby import is no longer forecast as 0 W
 - planner: expose per-slot `grid_overhead_kw` in slot payloads

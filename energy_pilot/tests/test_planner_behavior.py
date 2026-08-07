@@ -246,6 +246,48 @@ class PlannerBehaviorTests(unittest.TestCase):
         self.assertEqual(len(price["slots"]), 104)
 
 
+    def test_grid_overhead_is_forced_to_grid_and_costed(self):
+        slots = [
+            {"import_cents_kwh": 10.0, "export_cents_kwh": 5.0},
+            {"import_cents_kwh": 10.0, "export_cents_kwh": 5.0},
+        ]
+        plan = {
+            "path": [
+                {"grid_import_kwh": 0.0, "grid_export_kwh": 0.0, "cash_cost_cents": 0.0},
+                {"grid_import_kwh": 0.0, "grid_export_kwh": 0.1, "cash_cost_cents": -0.5},
+            ],
+            "cash_cost_cents": -0.5,
+            "objective_cents": -0.5,
+        }
+        result = main.apply_grid_overhead_to_plan(slots, plan, [0.08, 0.08], 0.25)
+        self.assertAlmostEqual(result["path"][0]["grid_import_kwh"], 0.02, places=6)
+        self.assertAlmostEqual(result["path"][0]["cash_cost_cents"], 0.2, places=6)
+        self.assertAlmostEqual(result["path"][1]["grid_export_kwh"], 0.08, places=6)
+        self.assertAlmostEqual(result["path"][1]["cash_cost_cents"], -0.4, places=6)
+        self.assertAlmostEqual(result["cash_cost_cents"], -0.2, places=6)
+
+    def test_grid_overhead_bootstraps_from_existing_measurement_history(self):
+        original = main.load_measurement_history
+        try:
+            samples = [0.06, 0.07, 0.08, 0.09, 0.10, 0.20]
+            slots = {}
+            for index, value in enumerate(samples):
+                start = (self.start + timedelta(minutes=15 * index)).isoformat()
+                slots[start] = {
+                    "metrics": {
+                        "grid_import_kw": {"weighted_sum": value * 900, "weight_seconds": 900},
+                        "grid_export_kw": {"weighted_sum": 0.0, "weight_seconds": 900},
+                    }
+                }
+            main.load_measurement_history = lambda: {"slots": slots}
+            value, count = main.measurement_grid_overhead_estimate()
+        finally:
+            main.load_measurement_history = original
+        self.assertEqual(count, len(samples))
+        self.assertIsNotNone(value)
+        self.assertGreaterEqual(value, 0.06)
+        self.assertLessEqual(value, 0.10)
+
 if __name__ == "__main__":
     unittest.main()
 
